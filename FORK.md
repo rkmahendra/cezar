@@ -29,6 +29,16 @@ scripts/reinstall-fork.sh --force  # skip the "no active runs" guard
 
 Undo: `npm i -g cezar-run && sudo systemctl restart cezar`.
 
+### Service setup on this host (systemd drop-in, not in git)
+
+`/etc/systemd/system/cezar.service.d/default-project.conf` does three things:
+
+- sets the default project to `~/projects/dev0`;
+- sources `~/.config/crab9.env`, which holds jcode's provider key;
+- forwards `CRAB9_*` to agents with `CEZ_ENV_PASSTHROUGH`.
+
+Remove the drop-in and run `sudo systemctl daemon-reload && sudo systemctl restart cezar` to revert.
+
 ## Staying up to date
 
 ```bash
