@@ -1,0 +1,143 @@
+[
+  {
+    "type": "session.started",
+    "sessionId": "session_microbe_1791266983285_a167adcf37861ac1",
+    "backend": "jcode",
+    "model": "cc/claude-opus-5-5",
+    "cwd": "/work/repo"
+  },
+  {
+    "type": "turn.started",
+    "turnId": "turn_1"
+  },
+  {
+    "type": "item.started",
+    "item": {
+      "kind": "tool",
+      "id": "toolu_01EkfCsTmJ2dZnQgWKFswLfu",
+      "name": "read",
+      "toolKind": "read",
+      "title": "Reading file",
+      "status": "running"
+    }
+  },
+  {
+    "type": "item.updated",
+    "item": {
+      "kind": "tool",
+      "id": "toolu_01EkfCsTmJ2dZnQgWKFswLfu",
+      "name": "read",
+      "toolKind": "read",
+      "title": "Reading file",
+      "status": "running"
+    }
+  },
+  {
+    "type": "item.updated",
+    "item": {
+      "kind": "tool",
+      "id": "toolu_01EkfCsTmJ2dZnQgWKFswLfu",
+      "name": "read",
+      "toolKind": "read",
+      "title": "Reading file",
+      "status": "running",
+      "input": {
+        "file_path": "does-not-exist.txt",
+        "intent": "Read requested file"
+      }
+    }
+  },
+  {
+    "type": "item.updated",
+    "item": {
+      "kind": "tool",
+      "id": "toolu_01EkfCsTmJ2dZnQgWKFswLfu",
+      "name": "read",
+      "toolKind": "read",
+      "title": "Reading file",
+      "status": "running",
+      "input": {
+        "file_path": "does-not-exist.txt",
+        "intent": "Read requested file"
+      }
+    }
+  },
+  {
+    "type": "item.completed",
+    "item": {
+      "kind": "tool",
+      "id": "toolu_01EkfCsTmJ2dZnQgWKFswLfu",
+      "name": "read",
+      "toolKind": "read",
+      "title": "Reading file",
+      "status": "failed",
+      "input": {
+        "file_path": "does-not-exist.txt",
+        "intent": "Read requested file"
+      },
+      "error": "Error: File not found: does-not-exist.txt"
+    }
+  },
+  {
+    "type": "item.started",
+    "item": {
+      "kind": "message",
+      "id": "turn_1_msg_1",
+      "role": "assistant",
+      "text": ""
+    }
+  },
+  {
+    "type": "item.delta",
+    "itemId": "turn_1_msg_1",
+    "field": "text",
+    "delta": "OK. `does-not-"
+  },
+  {
+    "type": "item.delta",
+    "itemId": "turn_1_msg_1",
+    "field": "text",
+    "delta": "exist.txt` isn"
+  },
+  {
+    "type": "item.delta",
+    "itemId": "turn_1_msg_1",
+    "field": "text",
+    "delta": "'t there, so the read failed"
+  },
+  {
+    "type": "item.delta",
+    "itemId": "turn_1_msg_1",
+    "field": "text",
+    "delta": " with \"File not found\"."
+  },
+  {
+    "type": "item.completed",
+    "item": {
+      "kind": "message",
+      "id": "turn_1_msg_1",
+      "role": "assistant",
+      "text": "OK. `does-not-exist.txt` isn't there, so the read failed with \"File not found\"."
+    }
+  },
+  {
+    "type": "usage.updated",
+    "usage": {
+      "input": 47876,
+      "output": 113,
+      "total": 94971,
+      "cacheRead": 46982
+    }
+  },
+  {
+    "type": "turn.completed",
+    "turnId": "turn_1",
+    "stopReason": "end_turn",
+    "usage": {
+      "input": 47876,
+      "output": 113,
+      "total": 94971,
+      "cacheRead": 46982
+    }
+  }
+]

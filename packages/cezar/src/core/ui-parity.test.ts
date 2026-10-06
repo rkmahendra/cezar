@@ -42,7 +42,7 @@ import { describe, expect, it } from 'vitest';
 import type { UiEvent, UiItem } from './ui-events.ts';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const BACKENDS = ['claude', 'codex', 'opencode', 'cursor', 'pi', 'junie', 'copilot'] as const;
+const BACKENDS = ['claude', 'codex', 'opencode', 'cursor', 'pi', 'junie', 'copilot', 'jcode'] as const;
 
 /** Every event across every golden fixture of one backend. */
 function fixtureEvents(backend: (typeof BACKENDS)[number]): UiEvent[] {
@@ -89,7 +89,9 @@ const CAPABILITIES: ReadonlyArray<
     (events) => items(events).some((item) => item.kind === 'reasoning' && item.text.trim() !== ''),
     // Cursor's docs are explicit: "`thinking` events are suppressed in print mode and will
     // not appear in any output format" (cursor.com/docs/cli/reference/output-format).
-    ['cursor'],
+    // jcode 0.91.0 (fork-local): the binary contains no `agent_thought_chunk` string at all, and
+    // a live capture with a "think step by step" prompt sent none (`__fixtures__/jcode/`).
+    ['cursor', 'jcode'],
   ],
   [
     'structured diffs (Edit input / fileChange.changes / patch parts)',

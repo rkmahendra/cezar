@@ -106,6 +106,7 @@ const RUNNER_LABEL: Record<RunnerId, string> = {
   pi: 'pi',
   junie: 'Junie',
   copilot: 'GitHub Copilot',
+  jcode: 'jcode',
 };
 
 function unavailableReason(runner: RunnerId): string {

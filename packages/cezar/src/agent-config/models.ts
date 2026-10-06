@@ -24,6 +24,8 @@ const MODEL_SETTINGS_STRATEGIES: Record<RunnerId, AgentModelSettingsStrategy> = 
   pi: piModelSettingsStrategy,
   junie: junieModelSettingsStrategy,
   copilot: copilotModelSettingsStrategy,
+  // jcode keeps its model in its own daemon config; report no native default.
+  jcode: { runner: 'jcode', read: async () => ({}) },
 };
 
 export function readAgentModelSettings(

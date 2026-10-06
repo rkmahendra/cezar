@@ -64,6 +64,11 @@ const connectedResults: Record<string, ProviderCommandResult> = {
     stderr: '',
     exitCode: 0,
   },
+  jcode: {
+    stdout: '{"jsonrpc":"2.0","id":1,"result":{"sessionId":"session_x_1"}}',
+    stderr: '',
+    exitCode: 0,
+  },
 };
 
 const originalEnv = {
@@ -107,6 +112,7 @@ function resultFor(executable: string): ProviderCommandResult {
   if (executable === 'agent' || executable.includes('cursor')) return connectedResults.cursor!;
   if (executable.includes('opencode')) return connectedResults.opencode!;
   if (executable.includes('copilot')) return connectedResults.copilot!;
+  if (executable.includes('jcode')) return connectedResults.jcode!;
   return connectedResults.pi!;
 }
 
@@ -625,6 +631,7 @@ describe('ProviderAuthService', () => {
         { provider: 'pi' },
         { provider: 'junie', status: 'connected' },
         { provider: 'copilot' },
+        { provider: 'jcode' },
       ],
     });
   });
@@ -649,6 +656,7 @@ describe('ProviderAuthService', () => {
       { executable: 'agent', args: ['status', '--format', 'json'], timeoutMs: 10_000 },
       { executable: 'pi', args: ['--list-models'], timeoutMs: 10_000 },
       { executable: 'copilot', args: ['--acp'], timeoutMs: 10_000 },
+      { executable: 'jcode', args: ['acp', '--no-update'], timeoutMs: 10_000 },
     ]);
     release();
     await expect(pending).resolves.toBeDefined();
@@ -1105,6 +1113,7 @@ describe('ProviderAuthService', () => {
         { provider: 'pi', status: 'connected' },
         { provider: 'junie', status: 'connected' },
         { provider: 'copilot', status: 'connected' },
+        { provider: 'jcode', status: 'connected' },
       ],
     });
     expect(runCommand).not.toHaveBeenCalled();
@@ -1218,6 +1227,7 @@ describe('ProviderAuthService', () => {
         { provider: 'pi', status: 'connected' },
         { provider: 'junie', status: 'connected' },
         { provider: 'copilot', status: 'connected' },
+        { provider: 'jcode', status: 'connected' },
       ],
     });
     expect(runCommand).not.toHaveBeenCalled();

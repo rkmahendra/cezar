@@ -8,6 +8,7 @@ const HOME: AgentHomePaths = {
   cursor: '/home/u/.cursor',
   copilot: '/home/u/.copilot',
   junie: '/home/u/.junie',
+  jcode: '/home/u/.jcode',
 };
 
 describe('agent-config catalog', () => {

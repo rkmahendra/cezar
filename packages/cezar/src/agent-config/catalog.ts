@@ -39,6 +39,8 @@ export interface AgentHomePaths {
   copilot: string;
   /** `~/.junie` — no relocation var documented (see `PROFILE_ENV_VAR.junie`) */
   junie: string;
+  /** `~/.jcode` */
+  jcode: string;
 }
 
 export interface ConfigFileDef {

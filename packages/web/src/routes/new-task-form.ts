@@ -56,6 +56,7 @@ export const RUNNERS: readonly RunnerOption[] = [
   { id: 'cursor', label: 'cursor', desc: 'Cursor Agent CLI' },
   { id: 'pi', label: 'pi', desc: 'pi CLI (provider/model)' },
   { id: 'copilot', label: 'copilot', desc: 'GitHub Copilot CLI (ACP)' },
+  { id: 'jcode', label: 'jcode', desc: 'jcode (ACP)' },
 ]
 
 export interface ModelPreset {
@@ -107,6 +108,10 @@ export const MODELS_BY_RUNNER: Record<Runner, readonly ModelPreset[]> = {
   // stays free text for anything the account is entitled to.
   copilot: [
     { id: '', label: 'auto', desc: 'Let Copilot pick the model' },
+  ],
+  // jcode: free text, any id from `jcode` /models; empty keeps the daemon default.
+  jcode: [
+    { id: '', label: 'auto', desc: 'Use your jcode default model' },
   ],
 }
 

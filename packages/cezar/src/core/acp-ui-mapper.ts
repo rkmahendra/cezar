@@ -58,6 +58,8 @@ export interface AcpDialect {
   usageFromPromptResult?(result: Record<string, unknown>): TokenUsage | undefined;
   /** Plan entries carried by a tool call (for agents whose plan is a tool, not a `plan` update). */
   planFromToolCall?(name: string, update: Record<string, unknown>): PlanEntry[] | undefined;
+  /** Diffs an agent reports outside ACP `diff` content parts (jcode: a ```diff block in output). */
+  diffsOf?(update: Record<string, unknown>): FileDiff[] | undefined;
   /** The user-facing line for a JSON-RPC error — lets a dialect replace vendor prose (auth hints). */
   errorMessage?(error: Record<string, unknown>): string | undefined;
 }
@@ -301,6 +303,7 @@ function upsertTool(
   const rawInput = update.rawInput;
   const display = toolDisplay(name, rawInput ?? previous?.input);
   const content = toolContent(update.content);
+  if (content.diffs.length === 0) content.diffs.push(...(dialect.diffsOf?.(update) ?? []));
   const failed = status === 'failed';
   const item: UiToolItem = {
     ...(previous ?? {}),

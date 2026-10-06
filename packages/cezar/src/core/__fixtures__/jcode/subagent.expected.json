@@ -1,0 +1,185 @@
+[
+  {
+    "type": "session.started",
+    "sessionId": "session_mushroom_1791267019091_b3b8bc282c038f69",
+    "backend": "jcode",
+    "model": "cc/claude-opus-5-5",
+    "cwd": "/work/repo"
+  },
+  {
+    "type": "turn.started",
+    "turnId": "turn_1"
+  },
+  {
+    "type": "item.started",
+    "item": {
+      "kind": "tool",
+      "id": "toolu_011hpNfCkcbjay7GhcdXxHyG",
+      "name": "swarm",
+      "toolKind": "task",
+      "title": "swarm",
+      "status": "running"
+    }
+  },
+  {
+    "type": "item.updated",
+    "item": {
+      "kind": "tool",
+      "id": "toolu_011hpNfCkcbjay7GhcdXxHyG",
+      "name": "swarm",
+      "toolKind": "task",
+      "title": "swarm",
+      "status": "running"
+    }
+  },
+  {
+    "type": "item.updated",
+    "item": {
+      "kind": "tool",
+      "id": "toolu_011hpNfCkcbjay7GhcdXxHyG",
+      "name": "swarm",
+      "toolKind": "task",
+      "title": "swarm",
+      "status": "running",
+      "input": {
+        "action": "spawn",
+        "intent": "Spawn subagent to run echo",
+        "label": "echo runner",
+        "prompt": "Run `echo sub` in bash and report the output."
+      }
+    }
+  },
+  {
+    "type": "item.updated",
+    "item": {
+      "kind": "tool",
+      "id": "toolu_011hpNfCkcbjay7GhcdXxHyG",
+      "name": "swarm",
+      "toolKind": "task",
+      "title": "swarm",
+      "status": "running",
+      "input": {
+        "action": "spawn",
+        "intent": "Spawn subagent to run echo",
+        "label": "echo runner",
+        "prompt": "Run `echo sub` in bash and report the output."
+      }
+    }
+  },
+  {
+    "type": "item.completed",
+    "item": {
+      "kind": "tool",
+      "id": "toolu_011hpNfCkcbjay7GhcdXxHyG",
+      "name": "swarm",
+      "toolKind": "task",
+      "title": "swarm",
+      "status": "completed",
+      "input": {
+        "action": "spawn",
+        "intent": "Spawn subagent to run echo",
+        "label": "echo runner",
+        "prompt": "Run `echo sub` in bash and report the output."
+      },
+      "output": "Spawned new agent: session_cactus_1791267021950_9ead848bfbc7a0b0"
+    }
+  },
+  {
+    "type": "item.started",
+    "item": {
+      "kind": "message",
+      "id": "turn_1_msg_1",
+      "role": "assistant",
+      "text": ""
+    }
+  },
+  {
+    "type": "item.delta",
+    "itemId": "turn_1_msg_1",
+    "field": "text",
+    "delta": "OK. I"
+  },
+  {
+    "type": "item.delta",
+    "itemId": "turn_1_msg_1",
+    "field": "text",
+    "delta": " spawned one subagent ("
+  },
+  {
+    "type": "item.delta",
+    "itemId": "turn_1_msg_1",
+    "field": "text",
+    "delta": "session `session_cactus_"
+  },
+  {
+    "type": "item.delta",
+    "itemId": "turn_1_msg_1",
+    "field": "text",
+    "delta": "1791267021950_9"
+  },
+  {
+    "type": "item.delta",
+    "itemId": "turn_1_msg_1",
+    "field": "text",
+    "delta": "ead848bfbc7a"
+  },
+  {
+    "type": "item.delta",
+    "itemId": "turn_1_msg_1",
+    "field": "text",
+    "delta": "0b0`) and"
+  },
+  {
+    "type": "item.delta",
+    "itemId": "turn_1_msg_1",
+    "field": "text",
+    "delta": " told it to run `echo s"
+  },
+  {
+    "type": "item.delta",
+    "itemId": "turn_1_msg_1",
+    "field": "text",
+    "delta": "ub`. It hasn't"
+  },
+  {
+    "type": "item.delta",
+    "itemId": "turn_1_msg_1",
+    "field": "text",
+    "delta": " reported back yet, so I"
+  },
+  {
+    "type": "item.delta",
+    "itemId": "turn_1_msg_1",
+    "field": "text",
+    "delta": " don't have its output."
+  },
+  {
+    "type": "item.completed",
+    "item": {
+      "kind": "message",
+      "id": "turn_1_msg_1",
+      "role": "assistant",
+      "text": "OK. I spawned one subagent (session `session_cactus_1791267021950_9ead848bfbc7a0b0`) and told it to run `echo sub`. It hasn't reported back yet, so I don't have its output."
+    }
+  },
+  {
+    "type": "usage.updated",
+    "usage": {
+      "input": 47961,
+      "output": 217,
+      "total": 95160,
+      "cacheRead": 46982
+    }
+  },
+  {
+    "type": "turn.completed",
+    "turnId": "turn_1",
+    "stopReason": "end_turn",
+    "usage": {
+      "input": 47961,
+      "output": 217,
+      "total": 95160,
+      "cacheRead": 46982
+    }
+  }
+]

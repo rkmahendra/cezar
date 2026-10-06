@@ -6,7 +6,7 @@ import { resolveClaudeBin } from './claude-bin.ts';
 const exec = promisify(execFile);
 
 export interface BackendCheck {
-  name: 'claude' | 'codex' | 'opencode' | 'cursor' | 'pi' | 'junie' | 'copilot' | 'gh' | 'git';
+  name: 'claude' | 'codex' | 'opencode' | 'cursor' | 'pi' | 'junie' | 'copilot' | 'jcode' | 'gh' | 'git';
   available: boolean;
   version?: string;
   hint?: string;
@@ -28,6 +28,7 @@ export async function detectEnvironment(): Promise<BackendCheck[]> {
     probePi(),
     probeJunie(),
     probeCopilot(),
+    probeJcode(),
     probeGh(),
     probeGit(),
   ]);
@@ -212,6 +213,19 @@ async function probeCopilot(): Promise<BackendCheck> {
       available: false,
       hint: 'optional: install GitHub Copilot CLI (`npm i -g @github/copilot`) and run `copilot login` to use the copilot runner',
     };
+  }
+}
+
+async function probeJcode(): Promise<BackendCheck> {
+  if (process.env.CEZ_DRY_RUN === '1') return { name: 'jcode', available: true, version: 'mock (CEZ_DRY_RUN=1)' };
+  const bin = process.env.CEZ_JCODE_BIN ?? 'jcode';
+  try {
+    const { stdout } = await exec(bin, ['version'], { timeout: 10_000 });
+    // `jcode version` prints `version\tv0.91.0 (sha)` first.
+    const version = stdout.split(/\r?\n/)[0]?.replace(/^version\s+/, '').trim() ?? '';
+    return { name: 'jcode', available: true, version, hint: 'if no provider is configured, run `jcode login`' };
+  } catch {
+    return { name: 'jcode', available: false, hint: 'optional: install jcode (https://github.com/1jehuang/jcode) and run `jcode login`' };
   }
 }
 

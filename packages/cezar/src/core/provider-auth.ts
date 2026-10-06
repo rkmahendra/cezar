@@ -7,7 +7,7 @@ import { resolveClaudeBin } from './claude-bin.ts';
 import { quoteExecutable, withEnvPrefix } from './shell-env.ts';
 import { probeJunieAuthentication } from './junie-auth-probe.ts';
 
-export const PROVIDER_IDS = ['claude', 'codex', 'opencode', 'cursor', 'pi', 'junie', 'copilot'] as const;
+export const PROVIDER_IDS = ['claude', 'codex', 'opencode', 'cursor', 'pi', 'junie', 'copilot', 'jcode'] as const;
 export type ProviderId = (typeof PROVIDER_IDS)[number];
 export type ProviderConnectionState =
   | 'connected'
@@ -368,6 +368,17 @@ const DESCRIPTORS: readonly ProviderDescriptor[] = [
     loginArgs: ['login'],
     installHint: 'Install GitHub Copilot CLI (`npm i -g @github/copilot`), then run `copilot login`.',
     parse: parseCopilotStatus,
+    stdin: copilotAcpProbeStdin,
+  },
+  {
+    // `jcode acp` answers `session/new` with a sessionId whenever its daemon is up; provider auth
+    // is per-model inside jcode, so a session is the best cheap "usable" signal (no prompt sent).
+    id: 'jcode',
+    executable: () => process.env.CEZ_JCODE_BIN ?? 'jcode',
+    statusArgs: ['acp', '--no-update'],
+    loginArgs: ['login'],
+    installHint: 'Install jcode (https://github.com/1jehuang/jcode), then run `jcode login`.',
+    parse: (result) => (/"sessionId"\s*:\s*"/.test(result.stdout) ? 'connected' : null),
     stdin: copilotAcpProbeStdin,
   },
 ];
