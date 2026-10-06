@@ -20,6 +20,15 @@ git grep -n "jcode" -- packages ':!packages/cezar/src/core/jcode-*' ':!**/__fixt
 
 The one non-list change in a shared file is the optional `diffsOf` hook in `core/acp-ui-mapper.ts`.
 
+## Reinstall the running cezar from this checkout
+
+```bash
+scripts/reinstall-fork.sh          # build, npm i -g, sudo systemctl restart cezar, health check
+scripts/reinstall-fork.sh --force  # skip the "no active runs" guard
+```
+
+Undo: `npm i -g cezar-run && sudo systemctl restart cezar`.
+
 ## Staying up to date
 
 ```bash
