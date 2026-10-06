@@ -39,7 +39,10 @@ is the checklist.
 - No reasoning stream (`agent_thought_chunk`) and no sub-agent nesting on the wire. Spawned
   workers run in their own daemon session.
 - `allowedTools` is not honored: jcode runs its tools unrestricted, like Codex and OpenCode in cezar.
-- Dry-run (`CEZ_DRY_RUN=1`) reuses the Copilot ACP mock (verified: a full turn maps through the jcode dialect).
+- Dry-run (`CEZ_DRY_RUN=1`) reuses the Copilot ACP mock. A turn maps through the jcode dialect
+  (detection, text, tool, plan and usage all verified). Headless `cezar run` in dry-run parks at
+  `waiting`, because the mock never says `CEZ:DONE`. Upstream `copilot` does exactly the same, so
+  this is mock behavior, not a jcode bug. Use the cockpit for dry-run.
 - Guard tests: `jcode-ui-mapper.test.ts` (wire), `jcode-acp-runner.test.ts` (whole-block v1
   text, so a streamed `CEZ:DONE` closes the run) and `server/jcode-runner-api.test.ts`
   (`POST /runs` accepts `runner: jcode`).
