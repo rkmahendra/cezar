@@ -20,6 +20,7 @@ import { AcpClient, type AcpContentBlock, type AcpMessage, type AcpRequestAnswer
 import { abortAcpTurn, endAcpReplay, mapAcpFrame, type AcpUiMapperState } from './acp-ui-mapper.ts';
 import { EOF_KILL_GRACE_MS, EOF_TERM_GRACE_MS } from './claude-cli-runner.ts';
 import { createJcodeUiState, jcodeDialect } from './jcode-ui-mapper.ts';
+import { V1TextCoalescer } from './v1-text-coalescer.ts';
 import type { UiEvent } from './ui-events.ts';
 
 const DEFAULT_TIMEOUT_MS = 30 * 60_000;
@@ -120,6 +121,12 @@ class JcodeAcpSession implements AgentSession {
   private replayDone: (() => void) | null = null;
 
   private readonly textChunks: string[] = [];
+  // Whole-block v1 text (#V1TextCoalescer): the engine joins v1 `text` events with `\n`, so
+  // per-delta events split `CEZ:DONE` into `CE\nZ:DONE` and a finished run parked at `waiting`.
+  private readonly textCoalescer = new V1TextCoalescer((text) => {
+    this.textChunks.push(text);
+    this.emit({ type: 'text', text });
+  });
   private readonly toolCalls: AgentToolCallRecord[] = [];
   private tokensUsed = 0;
   private readonly stderr: string[] = [];
@@ -206,6 +213,7 @@ class JcodeAcpSession implements AgentSession {
     }
 
     await reading;
+    this.textCoalescer.flush();
     const exitCode = await exited;
     for (const timer of this.timers) clearTimeout(timer);
     if (this.autoEndTimer) clearTimeout(this.autoEndTimer);
@@ -339,6 +347,7 @@ class JcodeAcpSession implements AgentSession {
     if (!this.turnInFlight) return;
     this.turnInFlight = false;
     this.turnsCompleted += 1;
+    this.textCoalescer.flush();
     this.emit({ type: 'turn-end' });
     if (this.queue.length > 0) {
       this.pump();
@@ -380,10 +389,7 @@ class JcodeAcpSession implements AgentSession {
   private v1FromUi(event: UiEvent): void {
     switch (event.type) {
       case 'item.delta':
-        if (event.field === 'text') {
-          this.textChunks.push(event.delta);
-          this.emit({ type: 'text', text: event.delta });
-        }
+        if (event.field === 'text') this.textCoalescer.append(event.itemId, event.delta);
         return;
       case 'item.started':
         if (event.item.kind === 'tool') {
@@ -393,6 +399,7 @@ class JcodeAcpSession implements AgentSession {
         }
         return;
       case 'item.completed':
+        if (event.item.kind === 'message') this.textCoalescer.complete(event.item.id, event.item.text);
         if (event.item.kind === 'tool') {
           const failed = event.item.status === 'failed' || event.item.status === 'declined';
           this.emit({

@@ -40,6 +40,13 @@ is the checklist.
   workers run in their own daemon session.
 - `allowedTools` is not honored: jcode runs its tools unrestricted, like Codex and OpenCode in cezar.
 - Dry-run (`CEZ_DRY_RUN=1`) reuses the Copilot ACP mock (verified: a full turn maps through the jcode dialect).
-- Guard tests: `jcode-ui-mapper.test.ts` (wire) and `server/jcode-runner-api.test.ts` (`POST /runs` accepts `runner: jcode`).
+- Guard tests: `jcode-ui-mapper.test.ts` (wire), `jcode-acp-runner.test.ts` (whole-block v1
+  text, so a streamed `CEZ:DONE` closes the run) and `server/jcode-runner-api.test.ts`
+  (`POST /runs` accepts `runner: jcode`).
+- Verified live on jcode 0.91.0: `cezar run` with `defaultRunner: "jcode"` writes the file in the
+  task worktree and the run ends `done` (exit 0). Continue/resume keeps context. Cancel settles
+  in under 10 ms as `cancelled`.
+- Some models' raw `<think>` text reaches the transcript as plain text, because jcode sends it
+  inside `agent_message_chunk`. This is a jcode-side behavior; cezar does not strip it.
 - Recapture fixtures after a jcode upgrade changes the wire:
   `CEZ_UPDATE_FIXTURES=1 npm test -- jcode-ui-mapper`, then review the diff.
