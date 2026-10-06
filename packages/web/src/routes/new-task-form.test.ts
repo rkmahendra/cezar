@@ -501,3 +501,13 @@ describe('buildAutomationTask', () => {
     })
   })
 })
+
+describe('jcode model picks (fork)', () => {
+  it('keeps a picked bare vendor id instead of reverting to auto', () => {
+    for (const id of ['claude-opus-5', 'gpt-5.4', 'cc/claude-opus-5-5']) {
+      expect(modelConflictsWithRunner(id, 'jcode')).toBe(false)
+      expect(resolveModel(id, 'jcode', undefined, { runner: 'jcode', models: [{ id, label: id, description: '' }], source: 'live', stale: false })).toBe(id)
+    }
+    expect(modelConflictsWithRunner('gpt-5.4', 'claude')).toBe(true)
+  })
+})

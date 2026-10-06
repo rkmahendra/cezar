@@ -146,11 +146,17 @@ const NATIVE_MODEL_ID_PREFIX: Partial<Record<Runner, RegExp>> = {
  *  on the other backends. */
 const PROVIDER_SPANNING_RUNNERS: readonly Runner[] = ['opencode', 'pi']
 
+/** Runners that route ONE bare id space across every vendor (jcode's daemon serves
+ *  `claude-opus-5` and `gpt-5.4` side by side), so a bare `claude-…`/`gpt-…` id is native to them,
+ *  not a cross-runner mismatch. Without this the picker silently reverted every such pick to auto. */
+const MULTI_VENDOR_BARE_RUNNERS: readonly Runner[] = ['jcode']
+
 /** Keep recognized presets from another backend out of a runner's custom-model escape hatch
  * (#480).
  * Unknown ids remain valid custom models; only a known cross-runner mismatch is discarded. */
 export function modelConflictsWithRunner(model: string, runner: Runner): boolean {
   if (!model || MODELS_BY_RUNNER[runner].some((preset) => preset.id === model)) return false
+  if (MULTI_VENDOR_BARE_RUNNERS.includes(runner)) return false
   if (NATIVE_MODEL_ID_PREFIX[runner]?.test(model)) return false
   return Object.entries(MODELS_BY_RUNNER).some(
     ([other, presets]) =>

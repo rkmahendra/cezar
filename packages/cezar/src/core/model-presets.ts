@@ -92,6 +92,8 @@ function namesAnotherKnownProvider(model: string, runner: RunnerId): boolean {
  *  also one of `runner`'s own. `''`/unknown/custom ids never conflict. */
 export function modelConflictsWithRunner(model: string, runner: RunnerId): boolean {
   if (!model) return false;
+  // jcode serves every vendor's bare ids side by side, so nothing is "another runner's" there.
+  if (runner === 'jcode') return false;
   if (KNOWN_PRESETS_BY_RUNNER[runner]?.includes(model)) return false;
   if (NATIVE_MODEL_ID_PREFIX[runner]?.test(model)) return false;
   // Both structural halves of the guard need no vendor model knowledge, so — unlike the preset

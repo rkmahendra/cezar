@@ -120,7 +120,9 @@ export const BACKEND_MODEL_MAP: Readonly<Record<AgentBackend, BackendModelMap>> 
   // only form Copilot accepts.
   copilot: { defaultProvider: 'github' },
   // jcode takes bare catalog ids over `session/set_model` (`gpt-5.4`, `claude-opus-5`); its daemon routes them.
-  jcode: { defaultProvider: 'jcode' },
+  // Ids with a slash (`cc/claude-opus-5-5`, `zai-org/GLM-5`) are jcode route/catalog ids, not a
+  // cezar provider prefix: pass them through verbatim.
+  jcode: { defaultProvider: 'jcode', allowExplicitProvider: true, wireProviderQualified: true },
 };
 
 const SLASH = '/';
