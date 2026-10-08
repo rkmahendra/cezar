@@ -1,5 +1,5 @@
 import type { DispatchIntent } from '@open-mercato/cezar-contract';
-import { zonedParts } from '@open-mercato/cezar-contract';
+import { zonedParts, trackerReadScope, trackerWorkflowSchema } from '@open-mercato/cezar-contract';
 import { loadWorkflows } from '../workflows/load.ts';
 import { stepsIssue, type WorkflowDef } from '../workflows/types.ts';
 import type { RunStore } from '../runs/store.ts';
@@ -231,6 +231,15 @@ export async function launchTrackerAutomationRun(options: {
   const { definition, candidate } = options;
   const workflow = await resolveWorkflow(options.root, definition);
   const input = startInput(definition, renderTrackerTask(definition, candidate), options.dispatchEnabled ?? false);
+  if (definition.task.linearWorkflow === true) {
+    if (candidate.provider !== 'linear' || candidate.association.kind !== 'linear'
+      || (definition.task.variants ?? 1) !== 1 || !definition.trackerTrigger
+      || trackerReadScope(candidate.association) !== trackerReadScope(definition.trackerTrigger.association))
+      throw new Error('Linear workflow requires one task and the currently authorized Linear automation scope.');
+    input.trackerWorkflow = trackerWorkflowSchema.parse({
+      association: candidate.association, itemId: candidate.key, url: candidate.url, delegateCredentials: true,
+    });
+  }
   const runs = (definition.task.variants ?? 1) > 1
     ? options.manager.startVariants(workflow, input, definition.task.variants ?? 1)
     : [options.manager.startRun(workflow, input)];

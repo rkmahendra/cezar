@@ -283,4 +283,26 @@ describe('tracker automation task templates (2026-09-19)', () => {
         .toEqual(store.getRun(launched.runId)?.automationTracker);
     } finally { await rm(root, { recursive: true, force: true }); }
   });
+
+  it.each([undefined, false, true])('only binds Linear writeback with explicit consent=%s', async consent => {
+    const root = await mkdtemp(join(tmpdir(), 'cezar-linear-template-'));
+    const store = RunStore.open(join(root, '.ai/cezar'));
+    try {
+      const association = { kind: 'linear' as const, source: { id: 'org', webUrl: 'https://linear.app/acme' }, externalId: '11111111-1111-4111-8111-111111111111', externalName: 'Team', connectionId: '22222222-2222-4222-8222-222222222222' };
+      const startRun = vi.fn(() => store.createRun({ title: 'automation', workflow: 'quick-task', task: 'test', steps: [] }));
+      const manager = { startRun } as unknown as RunManager;
+      const item = { ...trackerCandidate, provider: 'linear' as const, association, url: 'https://linear.app/acme/issue/ABC-1' };
+      const def = { ...trackerDefinition, trackerTrigger: { events: ['issue.opened' as const], association }, task: { ...trackerDefinition.task, linearWorkflow: consent } };
+      await launchTrackerAutomationRun({ root, manager, store, definition: def, candidate: item, receiptId: 'receipt' });
+      const input = startRun.mock.calls[0] as unknown as [unknown, { trackerWorkflow?: unknown }];
+      expect(input[1].trackerWorkflow).toEqual(consent ? { association, itemId: 'ABC-1', url: item.url, delegateCredentials: true } : undefined);
+      if (consent) {
+        startRun.mockClear();
+        await expect(launchTrackerAutomationRun({ root, manager, store, definition: def, candidate: { ...item, association: { ...association, connectionId: '33333333-3333-4333-8333-333333333333' } }, receiptId: 'changed' })).rejects.toThrow('authorized Linear');
+        await expect(launchTrackerAutomationRun({ root, manager, store, definition: { ...def, task: { ...def.task, variants: 2 } }, candidate: item, receiptId: 'variants' })).rejects.toThrow('one task');
+        await expect(launchTrackerAutomationRun({ root, manager, store, definition: def, candidate: trackerCandidate, receiptId: 'jira' })).rejects.toThrow('authorized Linear');
+        expect(startRun).not.toHaveBeenCalled();
+      }
+    } finally { store.flush(); await rm(root, { recursive: true, force: true }); }
+  });
 });
