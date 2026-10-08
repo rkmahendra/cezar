@@ -27,7 +27,7 @@ let respond: (bin: string, args: string[]) => unknown;
 const calls = (bin: string) => execMock.mock.calls.filter((call) => call[0] === bin);
 const apiCalls = () => calls('glab');
 const postCalls = () => apiCalls().filter((call) => (call[1] as string[]).includes('POST'));
-const pushCalls = () => calls('git').filter((call) => call[1][0] === 'push');
+const pushCalls = () => calls('git').filter((call) => call[1].includes('push'));
 const input = (): DraftPrInput => ({
   repoRoot: root,
   run: { worktreePath: `${root}/worktree`, branch: 'cez/stale', baseBranch: 'origin/develop', title: 'Implement Linear task', task: 'Ship Linear task' } as DraftPrInput['run'],
@@ -36,7 +36,7 @@ const input = (): DraftPrInput => ({
 const standard = (bin: string, args: string[]): unknown => {
   if (bin === 'git') {
     if (args[0] === 'symbolic-ref') return 'feat/linear-42\n';
-    if (args[0] === 'check-ref-format' || args[0] === 'push' || args[0] === 'status') return '';
+    if (args[0] === 'check-ref-format' || args.includes('push') || args[0] === 'status') return '';
     if (args[0] === 'remote') return `git@${ref.host}:${ref.owner}/${ref.repo}.git\n`;
   }
   if (bin === 'glab') {
@@ -259,7 +259,7 @@ describe('GitLab draft MR publication', () => {
     expect(result).toEqual({ ok: true, url: mr.web_url, dryRun: false });
     expect(autosave).toHaveBeenCalledWith(`${root}/worktree`, 'pre-PR');
     expect(pushCalls()).toHaveLength(1);
-    expect(pushCalls()[0]![1]).toEqual(['push', '-u', '--', 'origin', 'refs/heads/feat/linear-42:refs/heads/feat/linear-42']);
+    expect(pushCalls()[0]![1]).toEqual(['-c', 'push.pushOption=', 'push', '--no-follow-tags', '--recurse-submodules=no', '-u', '--', 'origin', 'refs/heads/feat/linear-42:refs/heads/feat/linear-42']);
     expect(pushCalls()[0]![2]).toMatchObject({ cwd: `${root}/worktree`, timeout: 60_000, env: { GIT_TERMINAL_PROMPT: '0' } });
     expect(postCalls()).toHaveLength(1);
     expect(postCalls()[0]![1]).toEqual([
@@ -341,12 +341,16 @@ describe('GitLab draft MR publication', () => {
   it.each([
     'git@elsewhere.example:platform/payments/service.git',
     `https://${ref.host}/wrong/service.git`,
+    `https://${ref.host}/wrong/../platform/payments/service.git`,
+    `https://${ref.host}/platform/payments/service.git?token=secret`,
+    `https://${ref.host}/platform/payments/service.git#fragment`,
     `git@${ref.host}:platform/payments/service.git\ngit@evil.example:stolen/repo.git`,
   ])('refuses mismatched or multiple origin push URLs before vendor calls: %s', async (remote) => {
     respond = (bin, args) => args[0] === 'remote' ? remote : standard(bin, args);
     expect(await createGitlabDriver(root, ref).createPR(input())).toMatchObject({ ok: false, error: expect.stringContaining('push URL does not match') });
     expect(pushCalls()).toHaveLength(0);
     expect(apiCalls()).toHaveLength(0);
+    expect(autosave).not.toHaveBeenCalled();
   });
 
   it.each([`https://user:secret@${ref.host}/platform/payments/service.git`, `ssh://git@${ref.host}:2222/platform/payments/service.git`])('accepts supported git remote syntax without exposing credentials', async (remote) => {
@@ -361,7 +365,7 @@ describe('GitLab draft MR publication', () => {
       if (mode === 'same-branch' && args[0] === 'symbolic-ref') return 'develop';
       if (mode === 'default-branch' && args[0] === 'symbolic-ref') return 'main';
       if (mode === 'changed-branch' && args[0] === 'symbolic-ref' && ++heads > 1) return 'other-branch';
-      if (mode === 'push-failed' && args[0] === 'push') throw new Error('https://token:secret@host rejected');
+      if (mode === 'push-failed' && args.includes('push')) throw new Error('https://token:secret@host rejected');
       return standard(bin, args);
     };
     const result = await createGitlabDriver(root, ref).createPR(input());
@@ -369,6 +373,7 @@ describe('GitLab draft MR publication', () => {
     expect(JSON.stringify(result)).not.toContain('secret');
     expect(postCalls()).toHaveLength(0);
     expect(pushCalls()).toHaveLength(mode === 'push-failed' ? 1 : 0);
+    if (['wrong-base', 'same-branch', 'default-branch'].includes(mode)) expect(autosave).not.toHaveBeenCalled();
   });
 
   it.each(['dirty', 'unreadable'])('refuses a %s worktree after final autosave', async (mode) => {
@@ -381,7 +386,7 @@ describe('GitLab draft MR publication', () => {
     };
     expect(await createGitlabDriver(root, ref).createPR(input())).toMatchObject({ ok: false });
     expect(pushCalls()).toHaveLength(0);
-    expect(apiCalls()).toHaveLength(0);
+    expect(postCalls()).toHaveLength(0); // target/default lookup is read-only, before autosave
   });
 
   it('refuses to create a duplicate when branch lookup truncates before this project', async () => {

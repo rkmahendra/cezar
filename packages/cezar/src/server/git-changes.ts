@@ -37,7 +37,8 @@ function git(cwd: string, args: string[], env?: Record<string, string>): Promise
         cwd,
         maxBuffer: 32 * 1024 * 1024,
         encoding: 'utf8',
-        ...(env ? { env: { ...process.env, ...env } } : {}),
+        timeout: 60_000,
+        env: { ...process.env, ...env, GIT_TERMINAL_PROMPT: '0' },
       },
       (err, stdout, stderr) => resolvePromise({ ok: !err, stdout: stdout ?? '', stderr: stderr ?? '' }),
     );
@@ -653,6 +654,26 @@ export async function createOrSwitchBranch(
 
 // ---- commit & push ------------------------------------------------------------
 
+/** Task mutation preflight. Other feature checkouts are allowed, base/default and
+ * detached HEAD are not. Repo-view actions deliberately do not call this helper. */
+export async function checkTaskBranch(
+  dir: string,
+  baseBranch?: string,
+): Promise<{ ok: true; branch: string } | { ok: false; error: string }> {
+  const head = await git(dir, ['symbolic-ref', '--quiet', '--short', 'HEAD']);
+  const branch = head.stdout.trim();
+  if (!head.ok || !branch) return { ok: false, error: 'Check out a task branch before committing or pushing.' };
+  const defaultRef = await git(dir, ['symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD']);
+  const base = baseBranch?.replace(/^(?:refs\/remotes\/origin\/|refs\/heads\/|origin\/)/, '');
+  const defaultBranch = defaultRef.ok ? defaultRef.stdout.trim().replace(/^refs\/remotes\/origin\//, '') : undefined;
+  // ponytail: offline native origin/HEAD plus conventional defaults. Forge publication
+  // also checks the vendor default. Add explicit remote discovery only for a future fetch action.
+  if ([base, defaultBranch, 'main', 'master'].includes(branch)) {
+    return { ok: false, error: 'Task checkout is on a base or default branch. Switch to a feature branch before committing or pushing.' };
+  }
+  return { ok: true, branch };
+}
+
 export type CommitResult = { ok: true; sha: string } | { ok: false; error: string };
 
 /** `git add -A && git commit -m <message>` in `dir`. A clean tree, a failing
@@ -662,6 +683,10 @@ export async function commitAll(dir: string, message: string): Promise<CommitRes
   if (!status.ok) return { ok: false, error: gitReason(status, 'git status failed') };
   if (!status.stdout.trim()) {
     return { ok: false, error: 'nothing to commit — the working tree is clean' };
+  }
+  // add -A would clear the unmerged index and commit unresolved conflict text.
+  if (status.stdout.split('\n').some((line) => /U|AA|DD/.test(line.slice(0, 2)))) {
+    return { ok: false, error: 'Worktree has unmerged paths. Resolve conflicts before committing.' };
   }
   const add = await git(dir, ['add', '-A']);
   if (!add.ok) return { ok: false, error: gitReason(add, 'git add failed') };
@@ -691,7 +716,10 @@ export async function pushCurrentBranch(dir: string): Promise<PushResult> {
   }
   const remote = remotes.includes('origin') ? 'origin' : (remotes[0] as string);
   const upstream = await git(dir, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}']);
-  const args = upstream.ok ? ['push'] : ['push', '-u', remote, branch];
+  // Never let push.default, remote.pushDefault or a configured refspec push a
+  // different branch/repository. Tags are a separate publication, not requested here.
+  // Clear inherited push options: GitLab can interpret them as create/auto-merge.
+  const args = ['-c', 'push.pushOption=', 'push', '--no-follow-tags', '--recurse-submodules=no', ...(!upstream.ok ? ['-u'] : []), '--', remote, `refs/heads/${branch}:refs/heads/${branch}`];
   const push = await git(dir, args);
   if (!push.ok) return { ok: false, error: gitReason(push, 'git push failed') };
   return { ok: true, branch, remote, upstreamSet: !upstream.ok };
