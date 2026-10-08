@@ -6,8 +6,8 @@ import { RunStore } from '../runs/store.ts';
 import type { RunManager } from '../workflows/run.ts';
 import { apiRequest } from './loopback-request.testkit.ts';
 
-const mocks = vi.hoisted(() => ({ commit: vi.fn(), push: vi.fn(), publish: vi.fn(), active: vi.fn() }));
-vi.mock('./git-changes.ts', async original => ({ ...await original<typeof import('./git-changes.ts')>(), commitAll: mocks.commit, pushCurrentBranch: mocks.push }));
+const mocks = vi.hoisted(() => ({ branch: vi.fn(), commit: vi.fn(), push: vi.fn(), publish: vi.fn(), active: vi.fn() }));
+vi.mock('./git-changes.ts', async original => ({ ...await original<typeof import('./git-changes.ts')>(), checkTaskBranch: mocks.branch, commitAll: mocks.commit, pushCurrentBranch: mocks.push }));
 vi.mock('./git.ts', async original => ({ ...await original<typeof import('./git.ts')>(), getRepoInfo: vi.fn().mockResolvedValue({ root: '/repo', branch: 'main', remote: 'https://gitlab.com/team/repo.git' }) }));
 vi.mock('./forge/index.ts', async original => ({ ...await original<typeof import('./forge/index.ts')>(), resolveForge: () => ({ kind: 'gitlab', createPR: mocks.publish }) }));
 import { createApp } from './server.ts';
@@ -22,6 +22,7 @@ beforeEach(() => {
   id = store.createRun({ title: 'Review task', task: 'Fix it', workflow: 'quick-task', steps: [] }).id;
   store.updateRun(id, { status: 'review', worktreePath: root, branch: 'cez/test' });
   mocks.active.mockReset().mockReturnValue(false);
+  mocks.branch.mockReset().mockResolvedValue({ ok: true, branch: 'cez/test' });
   mocks.commit.mockReset().mockResolvedValue({ ok: true, sha: 'a'.repeat(40) });
   mocks.push.mockReset().mockResolvedValue({ ok: true, branch: 'cez/test', remote: 'origin', upstreamSet: true });
   mocks.publish.mockReset().mockResolvedValue({ ok: true, url: 'https://gitlab.com/team/repo/-/merge_requests/1', dryRun: false });
@@ -88,4 +89,13 @@ it('keeps idle waiting-session commit and push reachable', async () => {
   expect((await post('git/commit')).status).toBe(200);
   expect((await post('git/push')).status).toBe(200);
   expect((await post('pr')).status).toBe(409);
+});
+
+it.each(['git/commit', 'git/push'])('checks task base branch before %s mutates git', async action => {
+  store.updateRun(id, { baseBranch: 'origin/develop' });
+  mocks.branch.mockResolvedValue({ ok: false, error: 'Task checkout is on a base branch' });
+  expect((await post(action)).status).toBe(409);
+  expect(mocks.branch).toHaveBeenCalledWith(root, 'origin/develop');
+  expect(mocks.commit).not.toHaveBeenCalled();
+  expect(mocks.push).not.toHaveBeenCalled();
 });

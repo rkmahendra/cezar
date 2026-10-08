@@ -142,6 +142,7 @@ import {
   collectChanges,
   collectCommitChanges,
   collectRunCommits,
+  checkTaskBranch,
   commitAll,
   createOrSwitchBranch,
   imageMimeType,
@@ -4794,6 +4795,8 @@ export function createApp(deps: ServerDeps) {
       const worktree = worktreeOf(run);
       if (!worktree) return c.json({ error: NO_WORKTREE }, 409);
       if (run.status === 'running') return c.json({ error: 'the agent is still working in this worktree; wait for review' }, 409);
+      const branch = await checkTaskBranch(worktree, run.baseBranch);
+      if (!branch.ok) return c.json({ error: branch.error }, 409);
       const parsed = { data: c.req.valid('json') };
       const result = await commitAll(worktree, parsed.data.message);
       if (!result.ok) return c.json({ error: result.error }, 409);
@@ -4807,6 +4810,8 @@ export function createApp(deps: ServerDeps) {
       const worktree = worktreeOf(run);
       if (!worktree) return c.json({ error: NO_WORKTREE }, 409);
       if (run.status === 'running') return c.json({ error: 'the agent is still working in this worktree; wait for review' }, 409);
+      const branch = await checkTaskBranch(worktree, run.baseBranch);
+      if (!branch.ok) return c.json({ error: branch.error }, 409);
       const result = await pushCurrentBranch(worktree);
       if (!result.ok) return c.json({ error: result.error }, 409);
       // A push is the event that changes what the chips say about this task's pull requests —
