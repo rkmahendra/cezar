@@ -8,6 +8,7 @@ import { workflowDefSchema, workflowStepDefSchema } from './workflows.ts';
 // one. `src/runs/store.ts` imports the SAME value for its persistence twin, so the two halves of
 // `contract-parity.runs.test.ts` cannot drift apart by construction.
 import { dispatchIntentSchema, dispatchSchema } from './dispatch.ts';
+import { trackerWorkflowInputSchema, trackerWorkflowSchema } from './tracker.ts';
 
 /**
  * The RUNS family of `/api/v1` — a task's record, its lifecycle mutations, and the artifacts
@@ -175,6 +176,7 @@ export const runRecordSchema = z.object({
   /** Autonomous mode (#autonomous): the run never parks at `waiting` or the terminal `review`
    *  gate. Absent = falsy = not autonomous. */
   autonomous: z.boolean().optional(),
+  trackerWorkflow: trackerWorkflowSchema.optional(),
   /**
    * Provenance for a task a project GitHub automation launched (#694). Absent on every ordinary
    * run, which is what makes it additive — the cockpit shows the "from automation" link only when
@@ -879,7 +881,7 @@ export const imageInputSchema = attachmentInputSchema;
 export type ImageInput = AttachmentInput;
 
 /**
- * The KEYS of `POST /runs`' body, before the XOR refinement that `createRunInputSchema` adds.
+ * The shared KEYS of `POST /runs`' body, before manual-only tracker consent and XOR validation.
  *
  * Split out for one reason: `./automations.ts` builds an automation's task on top of this shape
  * (a task IS a run-creation body minus the three keys an automation supplies itself), and zod
@@ -935,7 +937,10 @@ export const createRunInputBaseSchema = z
  * Every bound here is the server's own (#429): an unbounded body must never reach a spawned
  * process, so a client that validates before sending gets the same answer the route would give.
  */
-export const createRunInputSchema = createRunInputBaseSchema.refine(
+export const createRunInputSchema = createRunInputBaseSchema.extend({
+  /** Explicit credential delegation for a manual Linear workflow, not an automation template. */
+  trackerWorkflow: trackerWorkflowInputSchema.optional(),
+}).refine(
   (b) => Boolean(b.workflow) !== Boolean(b.steps),
   { message: 'provide either "workflow" or "steps", not both' },
 );

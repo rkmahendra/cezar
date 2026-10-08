@@ -8,6 +8,10 @@ import type { AgentEvent, AgentRunResult, AgentRunSpec } from '../core/agent-run
 import { RunStore } from '../runs/store.ts';
 import { RunManager } from './run.ts';
 import { DEFAULT_ALLOWED_TOOLS, type WorkflowDef } from './types.ts';
+import { writeTrackerAssociation } from '../tracker-association.ts';
+import { TrackerConnections } from '../server/tracker/connections.ts';
+import { resolveTrackerAgentEnv } from '../server/tracker/agent-credentials.ts';
+import { trackerWorkflowSchema } from '@open-mercato/cezar-contract';
 
 const run = promisify(execFile);
 const GIT_ID = ['-c', 'user.name=test', '-c', 'user.email=test@local'];
@@ -101,6 +105,7 @@ describe('a resumed session keeps its workflow step tools', () => {
   });
 
   afterEach(async () => {
+    vi.unstubAllEnvs();
     manager?.dispose();
     manager = undefined;
     store.flush();
@@ -161,6 +166,58 @@ describe('a resumed session keeps its workflow step tools', () => {
       .toSatisfy((status) => ['done', 'review', 'failed', 'cancelled'].includes(String(status)));
   }
 
+  it('persists manual Linear consent before queueing and revalidates credentials on Continue after restart', async () => {
+    vi.stubEnv('CEZ_DRY_RUN', '0');
+    vi.stubEnv('CEZ_HOME', join(repoRoot, 'home'));
+    const connections = new TrackerConnections();
+    const connection = await connections.write(repoRoot, { kind: 'linear', key: 'synthetic-linear-secret' });
+    const binding = trackerWorkflowSchema.parse({
+      association: { kind: 'linear', source: { id: 'org', webUrl: 'https://linear.app/acme' },
+        externalId: '11111111-1111-4111-8111-111111111111', externalName: 'Team', connectionId: connection!.id },
+      itemId: 'OPS-1', url: 'https://linear.app/acme/issue/OPS-1', delegateCredentials: true,
+    });
+    await writeTrackerAssociation(join(repoRoot, '.ai/cezar'), binding.association);
+    manager!.dispose();
+    manager = new RunManager(store, repoRoot, { resolveTrackerEnv: resolveTrackerAgentEnv });
+    // Hold only scheduling, so startRun's real persistence and recovery run unmodified.
+    const pump = vi.spyOn(manager as unknown as { pump(): Promise<void> }, 'pump').mockResolvedValue();
+    const record = manager.startRun(SINGLE_DEF, { task: 'Work on OPS-1', worktree: false, runner: 'claude', trackerWorkflow: binding });
+    expect(store.getRun(record.id)?.trackerWorkflow).toEqual(binding);
+    expect(store.getRun(record.id)?.status).toBe('queued');
+    pump.mockRestore();
+    manager.dispose();
+    store.flush();
+    store = RunStore.open(join(repoRoot, '.ai/cezar'), { keepLive: true });
+    const registerSecrets = vi.spyOn(store, 'registerRunSecrets');
+    manager = new RunManager(store, repoRoot, { resolveTrackerEnv: resolveTrackerAgentEnv });
+    await manager.recover();
+    const opening = await specAt(0);
+    expect(opening.env?.LINEAR_API_KEY).toBe('synthetic-linear-secret');
+    expect(opening.systemPrompt).toContain('## Opted-in Linear workflow');
+    expect(opening.systemPrompt).toContain('Only after confirmed draft GitLab MR or GitHub PR publication');
+    expect(opening.systemPrompt).toContain('Do not merge, enable auto-merge, or mark the Linear issue Done');
+    expect(opening.systemPrompt).not.toContain('synthetic-linear-secret');
+    expect(registerSecrets).toHaveBeenCalledWith(record.id, ['synthetic-linear-secret']);
+    await settled(record.id);
+    const publication = 'https://gitlab.example.com/team/repo/-/merge_requests/7';
+    store.updateRun(record.id, { pullRequestUrl: publication });
+    manager.dispose();
+    store.flush();
+    store = RunStore.open(join(repoRoot, '.ai/cezar'));
+    manager = new RunManager(store, repoRoot, { resolveTrackerEnv: resolveTrackerAgentEnv });
+    expect(manager.continueRun(record.id, { text: 'Finish Linear writeback', runner: 'claude' })).toEqual({ ok: true });
+    const resumed = await specAt(1);
+    expect(resumed.env?.LINEAR_API_KEY).toBe('synthetic-linear-secret');
+    expect(resumed.systemPrompt).toContain(publication);
+    expect(resumed.systemPrompt).toContain('without moving the issue back to in-progress');
+    await settled(record.id);
+    await connections.write(repoRoot, { kind: 'linear', key: 'replacement-secret' });
+    expect(manager.continueRun(record.id, { text: 'Retry writeback', runner: 'claude' })).toEqual({ ok: true });
+    await expect.poll(() => store.getRun(record.id)?.status, { timeout: 15_000 }).toBe('failed');
+    expect(store.getRun(record.id)?.error).toMatch(/connection or scope changed/i);
+    expect(captured.specs).toHaveLength(2);
+  });
+
   it('the opening spawn and the Continue spawn of one real run agree on the tool policy', async () => {
     // The invariant #877 asked for, stated as the issue states it: a step narrows Bash to
     // `['git']`, a Continue follows, and the SECOND spec must carry the same allowlist as the
@@ -184,6 +241,8 @@ describe('a resumed session keeps its workflow step tools', () => {
     // implicit would make this assertion depend on the config of whoever runs the suite.
     const record = manager!.startRun(NARROWED, { task: 'do the thing', worktree: false, runner: 'claude' });
     const opening = await specAt(0);
+    expect(opening.systemPrompt).not.toContain('## Opted-in Linear workflow');
+    expect(opening.env?.LINEAR_API_KEY).toBeUndefined();
     await settled(record.id);
 
     expect(manager!.continueRun(record.id, { text: 'keep going', runner: 'claude' })).toEqual({ ok: true });

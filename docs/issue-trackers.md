@@ -2,7 +2,7 @@
 
 Cezar can browse a Jira Cloud project or a Linear team and hand a selected issue to an
 agent. Each local project has one saved tracker connection. GitHub remains independent.
-Browsing performs no vendor writes. Enabled event automations can launch agent workflows as described below. The visible issue list checks its first page every 60 seconds; it stops when hidden or closed.
+Browsing performs no vendor writes. Enabled event automations can launch agent workflows as described below. Manual Linear handoff can explicitly delegate workflow writeback, described in [Linear to draft MR/PR](linear-forge-workflow.md). The visible issue list checks its first page every 60 seconds; it stops when hidden or closed.
 
 ## Connect
 
@@ -41,8 +41,9 @@ replacement, no backups, and a hash of the canonical repository path. Repository
 only a non-secret connection ID and scope identity. Form secrets are cleared after save,
 failure, cancellation or project change; no browser storage is used. The API never forwards
 these credentials into ordinary manual handoff agent environments. Enabled tracker automation
-workflows have a deliberate exception: they receive only the captured connection’s credentials,
-after its project, source and revision have been revalidated.
+workflows and explicitly opted-in manual Linear workflows have a deliberate exception: they receive only the captured connection’s credentials,
+after its project, source and revision have been revalidated before each agent session. The
+delegated key retains its vendor permissions; this is not issue-level credential sandboxing.
 
 The form writes these files automatically; do not create or source a repository `.env`.
 The dotenv values are parsed into a project-local object, never loaded into `process.env`.
@@ -144,6 +145,27 @@ the description reaches its cap, the composer discloses the limitation and requi
 acknowledgment; you can add supplemental context. Final prompts over 100,000 characters
 must be edited before launch. Tracker credentials are not forwarded to agents by default:
 a source link does not grant the agent access to omitted context.
+
+### Opt-in Linear workflow writeback
+
+On a connected Linear issue, **Allow Linear workflow writeback for this run** grants the
+selected agent access to this project's Linear key for this run's steps and later Continue
+sessions. It is unchecked by default, clears after launch or a changed issue/connection, and
+does not apply to dragged issues or ordinary handoffs. A read-only key remains suitable for
+browsing; writeback needs permission to update the issue and attach the published link.
+
+The server validates the selected issue's membership before queueing and records only its
+identity, scope, connection revision and consent. Replacement/removal/disconnection blocks
+new sessions for that run instead of silently using replacement credentials. A live agent
+already holding a key cannot be revoked by deleting local state: stop it and revoke the key
+at Linear if necessary.
+
+Updates are **agent-driven instructions, not guaranteed synchronization**. The agent is
+instructed to move to in-progress on start, then link a verified draft MR/PR and move to the
+team's non-completed review state only after approved publication. No auto-merge and no Done
+transition on task completion. After publishing with the cockpit's draft button, **Continue
+the same run with the actual URL** to finish writeback. Full steps, template and failure
+handling: [Linear to draft MR/PR workflow](linear-forge-workflow.md).
 
 ## Recovery
 

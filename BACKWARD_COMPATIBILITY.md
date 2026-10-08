@@ -36,6 +36,17 @@ GitLab MRs, preserving `{url, dryRun}`, review gating and no-auto-merge semantic
 Custom hosts are discovered from local host-specific CLI configuration, not network
 probes. GitHub-only event automations remain GitHub-only.
 
+Manual Linear workflow extension (2026-10-08): `POST /api/v1/runs` and its project-scoped
+aliases accept optional `trackerWorkflow: {kind: 'linear', sourceId, externalId,
+connectionId, itemId, delegateCredentials: true}`. The server validates current connection,
+team and issue membership, then persists non-secret `trackerWorkflow` identity/consent on
+the run. Absent means the existing read-only handoff. Queued recovery and Continue resolve
+only the captured credential binding, refusing replaced/disconnected connections. This
+delegates the key's full permissions to trusted agent steps, not an issue-limited token.
+Writeback is agent-driven, not guaranteed synchronization. The draft publication endpoint
+does not update Linear. Continue the same opted-in run after cockpit publication to verify
+the MR/PR, attach its URL and request a non-completed review state. No new endpoint.
+
 **Every route lives under `/api/v1`.** The unversioned `/api/*` surface was REMOVED (see the breaking entry in CHANGELOG.md): the paths below are the real URLs; the project-scoped ones also answer at `/api/v1/p/<projectId>/<path>`. A future `v2` mounts beside `v1` rather than editing these paths.
 
 Consumed by the bundled React cockpit (`packages/cezar/web/dist`, shipped in lockstep — low risk) and by anyone scripting `localhost:4321`. Saved bookmarklets do NOT call the API — since GitHub's CSP blocked cross-origin probes they only open a page URL (`packages/web/src/lib/bookmarklet.ts`), which is why removing the unversioned surface did not break them.

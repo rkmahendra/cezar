@@ -1,4 +1,4 @@
-import type { CreateRunInput, TrackerItem } from '@open-mercato/cezar-api-client'
+import { trackerWorkflowInputSchema, type CreateRunInput, type TrackerAssociation, type TrackerItem } from '@open-mercato/cezar-api-client'
 
 import { MAX_CHAIN_STEPS, skillChainSteps } from './github-task'
 
@@ -8,6 +8,7 @@ export type TrackerPromptOptions = {
   skills?: readonly string[]
   supplemental?: string
   instruction?: string
+  linearWorkflow?: TrackerAssociation
 }
 
 export function trackerLosses(item: TrackerItem): string[] {
@@ -29,6 +30,7 @@ export function trackerTaskPrompt(item: TrackerItem, options: TrackerPromptOptio
   if (losses.length) parts.push(`Snapshot limitations:\n${losses.map((loss) => `- ${loss}`).join('\n')}`)
   if (options.skills?.length) parts.push(`Use these skills where relevant: ${options.skills.join(', ')}.`)
   if (options.supplemental?.trim()) parts.push(`Supplemental context:\n${options.supplemental.trim()}`)
+  if (options.linearWorkflow) parts.push('Linear workflow writeback requested: delegate the connected project credential to this run. Move to in-progress when starting. After approved draft MR/PR publication, verify and link its actual URL, then move to a non-completed review state. Never mark Done on task completion or auto-merge. If publication happens later in the cockpit, Continue this same run for writeback. Updates are agent-driven, not guaranteed synchronization.')
   if (options.instruction?.trim()) parts.push(options.instruction.trim())
   const task = parts.join('\n\n')
   if (task.length > TRACKER_TASK_LIMIT) {
@@ -54,7 +56,12 @@ export function trackerRunBody(
     ...options,
     skills: workflow ? skills : [],
   })
-  if (workflow) return { ...backend, workflow, task }
-  if (skills.length) return { ...backend, steps: skillChainSteps(skills), task }
-  return { ...backend, workflow: 'quick-task', task }
+  const association = options.linearWorkflow
+  const binding = association ? { trackerWorkflow: trackerWorkflowInputSchema.parse({
+    kind: association.kind, sourceId: association.source.id, externalId: association.externalId,
+    connectionId: association.connectionId, itemId: item.id, delegateCredentials: true,
+  }) } : {}
+  if (workflow) return { ...backend, ...binding, workflow, task }
+  if (skills.length) return { ...backend, ...binding, steps: skillChainSteps(skills), task }
+  return { ...backend, ...binding, workflow: 'quick-task', task }
 }

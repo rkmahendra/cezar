@@ -7,6 +7,7 @@ import { agentAccountsPath } from '../paths.ts';
 import { mergeWriteAgentAccounts } from '../workspace/agent-accounts.ts';
 import { registerProject } from '../workspace/projects.ts';
 import { RunManager } from './run.ts';
+import { trackerWorkflowSchema } from '@open-mercato/cezar-contract';
 
 /**
  * Which agent account a STEP spawns under (spec 2026-07-29-agent-profiles).
@@ -93,6 +94,27 @@ describe('RunManager agent-profile resolution', () => {
     store.updateRun(run.id, { automationTracker: { automationId: 'a', automationRevision: 1, receiptId: 'r', provider: 'jira', key: 'SAM-1', url: 'https://example.com', association: { kind: 'jira', source: { id: 'source', webUrl: 'https://example.com' }, externalId: 'SAM', externalName: 'Sam' } } });
     await expect(seam().agentEnvForStep(run.id, 'claude')).rejects.toThrow('connection changed');
     await expect(seam().agentEnvForStep(run.id, 'claude', { recordedProfileId: 'default' })).rejects.toThrow('connection changed');
+  });
+
+  it.each(['missing resolver', 'empty credentials', 'dry run'])('manual Linear delegation handles %s without leaking credentials', async mode => {
+    manager = new RunManager(store, repoRoot, mode === 'missing resolver' ? {} : { resolveTrackerEnv: async () => ({}) });
+    const run = newRun();
+    store.updateRun(run.id, { trackerWorkflow: trackerWorkflowSchema.parse({
+      association: { kind: 'linear', source: { id: 'org', webUrl: 'https://linear.app/acme' }, externalId: 'team', externalName: 'Team', connectionId: '11111111-1111-4111-8111-111111111111' },
+      itemId: 'OPS-1', url: 'https://linear.app/acme/issue/OPS-1', delegateCredentials: true,
+    }) });
+    const before = process.env.CEZ_DRY_RUN;
+    process.env.CEZ_DRY_RUN = mode === 'dry run' ? '1' : '0';
+    try {
+      if (mode === 'dry run') expect((await seam().agentEnvForStep(run.id, 'claude')).env.LINEAR_API_KEY).toBeUndefined();
+      else {
+        await expect(seam().agentEnvForStep(run.id, 'claude')).rejects.toThrow(/connection or scope changed/i);
+        await expect(seam().agentEnvForStep(run.id, 'claude', { recordedProfileId: 'default' })).rejects.toThrow(/connection or scope changed/i);
+      }
+    } finally {
+      if (before === undefined) delete process.env.CEZ_DRY_RUN;
+      else process.env.CEZ_DRY_RUN = before;
+    }
   });
 
   it('does not resolve tracker credentials for ordinary, legacy, or dry runs', async () => {

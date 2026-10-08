@@ -4,7 +4,7 @@ import { readTrackerAssociation } from '../../tracker-association.ts';
 import { TrackerConnections } from './connections.ts';
 
 export class TrackerAgentBindingError extends Error {
-  constructor() { super('Tracker connection or scope changed. Create a new run from the current automation.'); }
+  constructor() { super('Tracker connection or scope changed. Create a new run from the current issue or automation.'); }
 }
 
 /** Resolve only the credential revision captured by the run, never its replacement. */

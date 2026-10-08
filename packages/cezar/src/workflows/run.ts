@@ -1,5 +1,6 @@
-import type { TrackerAssociation } from '@open-mercato/cezar-contract';
+import type { TrackerAssociation, TrackerWorkflow } from '@open-mercato/cezar-contract';
 import { TrackerAgentBindingError } from '../server/tracker/agent-credentials.ts';
+import { trackerWorkflowPrompt } from '../server/tracker/workflow.ts';
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
@@ -586,6 +587,8 @@ function formatWakeInstant(at: Date): string {
 
 export interface StartRunInput {
   task: string;
+  /** Server-validated manual Linear delegation. Read from the record after queueing. */
+  trackerWorkflow?: TrackerWorkflow;
   model?: string;
   /** Agent backend chosen for this task (GUI). Unset = the config default. */
   runner?: RunnerId;
@@ -1216,10 +1219,12 @@ export class RunManager {
     const profileId = options.recordedProfileId
       ?? (backend === (run?.runner ?? 'claude') ? run?.agentProfile : undefined);
     const resolved = await resolveProfileEnvForRoot(this.repoRoot, backend, profileId);
-    const association = run?.automationTracker?.association;
+    const association = run?.trackerWorkflow?.association ?? run?.automationTracker?.association;
+    if (run?.trackerWorkflow && !this.resolveTrackerEnv && process.env.CEZ_DRY_RUN !== '1') throw new TrackerAgentBindingError();
     const trackerEnv = association && this.resolveTrackerEnv && process.env.CEZ_DRY_RUN !== '1'
       ? await this.resolveTrackerEnv(this.repoRoot, association)
       : {};
+    if (run?.trackerWorkflow && process.env.CEZ_DRY_RUN !== '1' && !trackerEnv.LINEAR_API_KEY) throw new TrackerAgentBindingError();
     const secrets = [trackerEnv.JIRA_API_TOKEN, trackerEnv.LINEAR_API_KEY].filter((value): value is string => Boolean(value));
     if (trackerEnv.JIRA_EMAIL && trackerEnv.JIRA_API_TOKEN) {
       secrets.push(Buffer.from(`${trackerEnv.JIRA_EMAIL}:${trackerEnv.JIRA_API_TOKEN}`).toString('base64'));
@@ -1272,7 +1277,7 @@ export class RunManager {
     });
     // Persist the full definition so a queued run survives a restart (#367) —
     // ad-hoc "(planned)" chains exist nowhere else to re-resolve from.
-    this.store.updateRun(run.id, { workflowDef: workflow });
+    this.store.updateRun(run.id, { workflowDef: workflow, ...(input.trackerWorkflow ? { trackerWorkflow: input.trackerWorkflow } : {}) });
     // The run's place in a dispatch tree (spec 2026-09-10-dispatch), written the way
     // automation provenance is (`automations/task-template.ts`): an update straight after create,
     // rather than a tenth key on `createRun`'s parameter object. Persisting it here — not merely
@@ -3898,6 +3903,7 @@ export class RunManager {
           dispatchPromptPart(state.dispatchPrompt, record?.systemPrompt),
           state.automationsPrompt,
           record?.systemPrompt,
+          trackerWorkflowPrompt(record?.trackerWorkflow, record?.pullRequestUrl),
           generateFollowups ? HANDOFF_INSTRUCTIONS : HANDOFF_ONLY_INSTRUCTIONS,
         ),
         userPrompt: attachments.length
@@ -4819,6 +4825,7 @@ export class RunManager {
             dispatchPromptPart(state.dispatchPrompt, extraSystemPrompt),
             state.automationsPrompt,
             extraSystemPrompt,
+            trackerWorkflowPrompt(this.store.getRun(runId)?.trackerWorkflow, this.store.getRun(runId)?.pullRequestUrl),
             followupsEnabled() && input.generateFollowups !== false
               ? HANDOFF_INSTRUCTIONS
               : HANDOFF_ONLY_INSTRUCTIONS,

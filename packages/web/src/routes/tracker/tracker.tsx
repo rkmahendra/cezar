@@ -227,7 +227,7 @@ function TrackerDetail({ scopePending, association, id, selection, onSelectionCh
       {failure}
       {trackerLosses(item).length ? <div className="mt-4 rounded-md border border-warning/50 bg-warning/10 p-3 text-sm"><AlertTriangleIcon className="mr-2 inline size-4" />This snapshot is incomplete. Review the limitations in the handoff panel.</div> : null}
       <section data-slot="tracker-body" className="mt-5 text-sm"><Markdown>{item.body.trim() || '*No description was provided.*'}</Markdown></section>
-      <TrackerHandoff scopePending={scopePending} key={`${trackerAssociationKey(association)}:${item.id}`} item={item} detailUnavailable={detail.isError || !detail.data?.available} drafts={drafts} selection={selection} onSelectionChange={onSelectionChange} workflows={workflows.data?.workflows ?? []} skills={skills.data ?? []} />
+      <TrackerHandoff association={association} scopePending={scopePending} key={`${trackerAssociationKey(association)}:${item.id}`} item={item} detailUnavailable={detail.isError || !detail.data?.available} drafts={drafts} selection={selection} onSelectionChange={onSelectionChange} workflows={workflows.data?.workflows ?? []} skills={skills.data ?? []} />
     </article>
   )
 }

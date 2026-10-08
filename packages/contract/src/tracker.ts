@@ -54,6 +54,26 @@ export const trackerAssociationInputSchema = z
   .strict();
 export type TrackerAssociationInput = z.infer<typeof trackerAssociationInputSchema>;
 
+/** Manual, per-run consent. No client-authored URL, name or credential is accepted. */
+export const trackerWorkflowInputSchema = z.object({
+  kind: z.literal('linear'),
+  sourceId: z.string().min(1).max(200),
+  externalId: z.uuid(),
+  connectionId: z.uuid(),
+  itemId: z.string().max(100).regex(/^[a-zA-Z][a-zA-Z0-9_]*-\d+$/),
+  delegateCredentials: z.literal(true),
+}).strict();
+export type TrackerWorkflowInput = z.infer<typeof trackerWorkflowInputSchema>;
+
+/** Server-validated identity and consent, never a key. Absent on ordinary manual runs. */
+export const trackerWorkflowSchema = z.object({
+  association: trackerAssociationSchema.extend({ kind: z.literal('linear'), connectionId: z.uuid() }),
+  itemId: trackerWorkflowInputSchema.shape.itemId,
+  url: httpsUrlSchema,
+  delegateCredentials: z.literal(true),
+}).strict();
+export type TrackerWorkflow = z.infer<typeof trackerWorkflowSchema>;
+
 /** A provider-neutral Jira issue or Linear issue. */
 export const trackerItemSchema = z
   .object({
