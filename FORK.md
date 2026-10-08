@@ -1,7 +1,15 @@
-# FORK.md: jcode runner fork
+# FORK.md: rkmh integration branch
 
-This fork adds `jcode` as a cezar agent backend, driven through `jcode acp` (Agent Client
-Protocol over stdio). Everything else tracks upstream `open-mercato/cezar`.
+`rkmh` consolidates the former `jcode-runner` and `cez/b71d26c5` branches. It adds
+`jcode` as a cezar agent backend, driven through `jcode acp` (Agent Client Protocol
+over stdio), plus GitLab/enterprise forge connections and opt-in Linear forge
+writeback. See [forge connections](docs/forge-connections.md) and
+[Linear forge workflow](docs/linear-forge-workflow.md).
+
+`origin` is the fork (`rkmahendra/cezar`); `upstream` is the original repository
+(`open-mercato/cezar`). `main` stays a clean upstream mirror.
+Updates flow from upstream into `rkmh`; fork work is pushed only to `origin`, not
+submitted as pull requests to the original repository.
 
 ## What the fork adds
 
@@ -19,6 +27,10 @@ git grep -n "jcode" -- packages ':!packages/cezar/src/core/jcode-*' ':!**/__fixt
 ```
 
 The one non-list change in a shared file is the optional `diffsOf` hook in `core/acp-ui-mapper.ts`.
+
+Jcode also receives private project MCP servers through ACP `session/new` and
+`session/load`, including Continue and resume fallback. HTTP/SSE transports follow
+the CLI's advertised capabilities. Wire behavior is mock-tested, not live-verified.
 
 ## Reinstall the running cezar from this checkout
 
@@ -42,11 +54,16 @@ Remove the drop-in and run `sudo systemctl daemon-reload && sudo systemctl resta
 ## Staying up to date
 
 ```bash
-git fetch upstream
-git checkout main && git merge --ff-only upstream/main   # main stays a clean mirror
-git checkout jcode-runner && git merge main              # or: git rebase main
-npm run typecheck && npm test -- packages/cezar/src/core/jcode-ui-mapper packages/cezar/src/core/ui-parity
+git fetch upstream main
+git switch main && git merge --ff-only upstream/main
+git switch rkmh && git merge --no-ff --no-commit main
+npm run typecheck && npm test && npm run test:unit && npm run build && npm run test:package
+git commit -m "Merge upstream main into rkmh"
+git push -u origin rkmh
 ```
+
+If the shell exports `ANTHROPIC_MODEL`, run validation commands with
+`env -u ANTHROPIC_MODEL` so host model choices do not override test fixtures.
 
 Conflict rule: when upstream adds runner X where `jcode` sits, keep both (`'copilot', 'X', 'jcode'`).
 If upstream adds a new `Record<RunnerId, …>` map, typecheck fails until it gets a `jcode` entry. That

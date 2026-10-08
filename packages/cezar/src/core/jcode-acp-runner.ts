@@ -17,6 +17,7 @@ import {
 } from './agent-runner.ts';
 import { buildChildEnv } from './agent-env.ts';
 import { AcpClient, type AcpContentBlock, type AcpMessage, type AcpRequestAnswer } from './acp-client.ts';
+import { acpMcpCapabilities, skippedServersNote, toAcpMcpServers } from './private-mcp.ts';
 import { abortAcpTurn, endAcpReplay, mapAcpFrame, type AcpUiMapperState } from './acp-ui-mapper.ts';
 import { EOF_KILL_GRACE_MS, EOF_TERM_GRACE_MS } from './claude-cli-runner.ts';
 import { createJcodeUiState, jcodeDialect } from './jcode-ui-mapper.ts';
@@ -277,6 +278,10 @@ class JcodeAcpSession implements AgentSession {
     const caps = isRecord(init.agentCapabilities) ? init.agentCapabilities : {};
     this.loadSupported = caps.loadSession === true;
     this.imagesSupported = isRecord(caps.promptCapabilities) && caps.promptCapabilities.image === true;
+    const { mcpServers, skipped } = toAcpMcpServers(this.spec.mcpServers ?? [], acpMcpCapabilities(init));
+    if (skipped.length) {
+      this.emit({ type: 'note', message: skippedServersNote('jcode', skipped, 'the CLI did not advertise that MCP transport') });
+    }
 
     if (this.spec.resume && this.spec.sessionId) {
       if (this.loadSupported) {
@@ -284,7 +289,7 @@ class JcodeAcpSession implements AgentSession {
           this.replayDone = resolve;
         });
         try {
-          await this.client.loadSession(this.spec.sessionId, this.spec.cwd, HANDSHAKE_TIMEOUT_MS);
+          await this.client.loadSession(this.spec.sessionId, this.spec.cwd, HANDSHAKE_TIMEOUT_MS, mcpServers);
           this.acpSessionId = this.spec.sessionId;
           await Promise.race([replayEnded, delay(REPLAY_WAIT_MS)]);
           this.ui = endAcpReplay(this.ui);
@@ -301,7 +306,7 @@ class JcodeAcpSession implements AgentSession {
       }
     }
     if (!this.acpSessionId) {
-      const created = await this.client.newSession(this.spec.cwd, HANDSHAKE_TIMEOUT_MS).catch((error: unknown) => {
+      const created = await this.client.newSession(this.spec.cwd, HANDSHAKE_TIMEOUT_MS, mcpServers).catch((error: unknown) => {
         const message = error instanceof Error ? error.message : String(error);
         throw new Error(`jcode could not start a session: ${message}`);
       });
