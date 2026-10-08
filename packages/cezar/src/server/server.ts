@@ -210,6 +210,8 @@ import { browseDirectory, isInsideBrowseRoot, isLexicallyInsideBrowseRoot, resol
 import { parseRemote, resolveForge, type ForgeAvailability } from './forge/index.ts';
 import { forgetRefStatus, readCachedRefStatuses, refNumberFromUrl, GithubPrNotFoundError, GH_CHECKS_MAX, GH_SEARCH_MAX, GH_REF_STATUS_MAX } from './github.ts';
 import { fetchForge, fetchForgeChecks, fetchForgeComments, fetchForgePrDiff, fetchForgeRefStatus, searchForge } from './forge-api.ts';
+import { forgeConnectionQuerySchema } from '@open-mercato/cezar-contract';
+import { readForgeConnection } from './forge-connection.ts';
 import { ensureLaunchKey } from './launch-key.ts';
 import { openInTerminal } from './open-in-terminal.ts';
 import {
@@ -5697,6 +5699,10 @@ export function createApp(deps: ServerDeps) {
     });
 
   const githubRoutes = new Hono<ProjectApiEnv>()
+    .get('/forge/connection', queryZodValidator(forgeConnectionQuerySchema), async (c) => {
+      c.header('Cache-Control', 'no-store');
+      return c.json(await readForgeConnection(c.get('project').root, c.req.valid('query').test === '1'));
+    })
     .get(
       '/github',
       // `limit` stays a bare string: the handler's `Number.parseInt`/`Number.isFinite` fallback to

@@ -1,4 +1,5 @@
 import { trackerReadScope } from '@open-mercato/cezar-api-client'
+import { forgeConnectionSchema, type ForgeConnection } from '@open-mercato/cezar-api-client'
 import type { TrackerAutomationOptions } from '@open-mercato/cezar-api-client'
 import { trackerWatchHandleSchema, trackerWatchSnapshotSchema, type TrackerWatchInput } from "@open-mercato/cezar-api-client"
 import type {
@@ -421,6 +422,10 @@ const runPath = (id: string, suffix = ''): string => `/runs/${encodeURIComponent
 /** Version, update check, repo/branch, and the tool probes behind the Tools menu. */
 export async function getHealth(opts?: ReadOptions): Promise<HealthResponse> {
   return unwrap(await cez.api.v1.health.$get({}, init(opts)), '/health')
+}
+
+export async function getForgeConnection(test = false, opts?: ReadOptions): Promise<ForgeConnection> {
+  return unwrapValidated(await cez.api.v1.p[':projectId'].forge.connection.$get({ param: { projectId: queryScope() }, query: test ? { test: '1' } : {} }, init(opts)), '/forge/connection', forgeConnectionSchema)
 }
 
 /** cezar's own GitHub star count, behind the sidebar's ⭐ ask. Workspace-level: the number is

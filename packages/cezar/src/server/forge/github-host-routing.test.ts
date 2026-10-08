@@ -36,6 +36,15 @@ function readMock() {
 }
 
 describe('GitHub host routing', () => {
+  it('refreshes explicit connection checks while default detection stays cached', async () => {
+    readMock();
+    const driver = createGithubDriver('/fresh-detect', { host: 'code.example', owner: 'acme', repo: 'demo' });
+    await driver.detect();
+    await driver.detect();
+    expect(execFile).toHaveBeenCalledTimes(1);
+    await driver.detect({ refresh: true });
+    expect(execFile).toHaveBeenCalledTimes(2);
+  });
   it('scopes legacy helpers including REST, GraphQL, checks and statuses to local origin', async () => {
     readMock();
     expect((await fetchGithub('/legacy-routing', true)).issues[0]?.title).toBe('code.example');

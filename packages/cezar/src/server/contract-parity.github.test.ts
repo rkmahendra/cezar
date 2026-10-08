@@ -11,6 +11,7 @@ import type {
   githubPrChangesDataSchema,
   githubPrMergeStateResponseSchema,
   githubRefStatusDataSchema,
+  forgeConnectionSchema,
 } from '@open-mercato/cezar-contract';
 import type {
   changesPayloadSchema,
@@ -101,6 +102,7 @@ describe('src/contract github + repo schemas match the routes exactly', () => {
   type ReclaimWorktrees200 = InferResponseType<typeof client.api.v1.worktrees.reclaim.$post, 200>;
 
   type _Checks = [
+    Assert<Exact<z.infer<typeof forgeConnectionSchema>, InferResponseType<typeof client.api.v1.forge.connection.$get, 200>>>,
     Assert<Exact<z.infer<typeof githubDataSchema>, Github200>>,
     Assert<Exact<z.infer<typeof githubCommentsDataSchema>, GithubComments200>>,
     Assert<Exact<z.infer<typeof githubChecksDataSchema>, GithubChecks200>>,

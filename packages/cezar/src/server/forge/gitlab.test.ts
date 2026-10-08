@@ -66,6 +66,14 @@ beforeEach(() => {
 afterEach(() => { vi.unstubAllEnvs(); vi.useRealTimers(); });
 
 describe('GitLab forge read operations', () => {
+  it('refreshes an explicit connection test without changing cached default probes', async () => {
+    const driver = createGitlabDriver(root, ref);
+    await driver.detect();
+    await driver.detect();
+    expect(apiCalls()).toHaveLength(1);
+    await driver.detect({ refresh: true });
+    expect(apiCalls()).toHaveLength(2);
+  });
   it('construction and repeated health probes never spawn, including expired cached state', async () => {
     const driver = createGitlabDriver(root, ref);
     expect(driver.kind).toBe('gitlab');

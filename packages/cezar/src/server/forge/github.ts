@@ -2686,11 +2686,11 @@ const detectCache = new Map<string, { at: number; result: ForgeAvailability }>()
 const detectInflight = new Map<string, Promise<ForgeAvailability>>();
 const DETECT_CACHE_MAX = 50;
 
-function detectGithub(repoRoot: GithubTarget): Promise<ForgeAvailability> {
+function detectGithub(repoRoot: GithubTarget, refresh = false): Promise<ForgeAvailability> {
   if (process.env.CEZ_DRY_RUN === '1') return Promise.resolve({ available: true });
   repoRoot = githubTarget(repoRoot);
   const hit = detectCache.get(githubKey(repoRoot));
-  if (hit && Date.now() - hit.at < CACHE_MS) return Promise.resolve(hit.result);
+  if (!refresh && hit && Date.now() - hit.at < CACHE_MS) return Promise.resolve(hit.result);
   const inflight = detectInflight.get(githubKey(repoRoot));
   if (inflight) return inflight;
   const probe = probeGithub(repoRoot).finally(() => detectInflight.delete(githubKey(repoRoot)));
@@ -3096,7 +3096,7 @@ export function createGithubDriver(root: string, repoRef: GithubRepoRef | null):
 
     recentCreated: (kind, sinceDate) => recentGithubCreated(repoRoot, repoRef, kind, sinceDate),
 
-    detect: () => detectGithub(repoRoot),
+    detect: (opts) => detectGithub(repoRoot, opts?.refresh),
     detectCached: () => detectGithubCached(repoRoot),
 
     listIssues: async (opts) => (await fetchGithub(repoRoot, opts?.refresh, opts?.limit)).issues,

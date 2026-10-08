@@ -8,6 +8,7 @@ export * from './runs.ts';
 export * from './drafts.ts';
 export * from './repo.ts';
 export * from './github.ts';
+export * from './forge-connection.ts';
 export * from './projects.ts';
 export * from './workspace.ts';
 export * from './workflows.ts';

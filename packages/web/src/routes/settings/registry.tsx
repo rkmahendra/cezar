@@ -29,6 +29,7 @@ import { ResourcesSection } from './resources-section'
 import { SkillsSection } from './skills-section'
 import { WorktreesSection } from './worktrees-section'
 import { TrackerSection } from './tracker-section'
+import { ForgeSection } from './forge-section'
 
 /**
  * The Settings section registry (R6 Step 1.3, spec §"Settings"): the ONE place a section is
@@ -60,6 +61,7 @@ export type SettingsSectionId =
   | 'keyboard'
   | 'skills'
   | 'tracker'
+  | 'forge'
 
 /** Which settings area a section belongs to — and therefore which store it writes. */
 export type SettingsScope = 'project' | 'global'
@@ -93,6 +95,14 @@ function comingSoon(title: string, Icon: ComponentType<SVGProps<SVGSVGElement>>)
 }
 
 export const SETTINGS_SECTIONS: SettingsSection[] = [
+  {
+    id: 'forge',
+    title: 'Code hosting',
+    description: 'Set up and test GitHub or GitLab access on the server.',
+    icon: FolderGit2Icon,
+    component: ForgeSection,
+    scope: 'project',
+  },
   // ---- project scope (`/p/<projectId>/settings/…`) — settings that describe THIS repo -------
   {
     id: 'tracker',

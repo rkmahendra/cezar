@@ -285,7 +285,7 @@ export interface ForgeDriver {
    *  host allowlist that keeps this feed from mistaking a non-GitHub remote for GitHub. */
   recentCreated?(kind: 'issue' | 'pr', sinceDate: string): Promise<ForgeRecentCreatedData>;
   /** Cheap, cached availability probe. May shell out (used by the GitHub tab). */
-  detect(): Promise<ForgeAvailability>;
+  detect(opts?: { refresh?: boolean }): Promise<ForgeAvailability>;
   /** Non-blocking availability for the health path: cached result, or null while warming — never
    *  shells out on the read (keeps /api/health under the bookmarklet's latency budget). */
   detectCached(): ForgeAvailability | null;

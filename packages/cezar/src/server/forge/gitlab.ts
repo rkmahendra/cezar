@@ -255,11 +255,11 @@ export function createGitlabDriver(repoRoot: string, repoRef: GitlabRepoRef): Fo
   }
   return {
     kind: 'gitlab',
-    detect: async () => {
+    detect: async (opts) => {
       if (!ref) return remember({ available: false, reason: 'GitLab repository reference is invalid.' });
       if (process.env.CEZ_DRY_RUN === '1') return { available: true };
       const state = cache();
-      if (state.availability && Date.now() - state.availability.at < CACHE_MS) return state.availability.result;
+      if (!opts?.refresh && state.availability && Date.now() - state.availability.at < CACHE_MS) return state.availability.result;
       if (state.probe) return state.probe;
       state.probe = project().then(() => remember({ available: true }), (error: unknown) => remember({ available: false, reason: failure(error) })).finally(() => { delete state.probe; });
       return state.probe;

@@ -27,6 +27,14 @@ Breaking: renaming/removing a command, flag, alias or env var; changing a defaul
 
 ## 2. HTTP API of the cockpit server (`packages/cezar/src/server/server.ts`)
 
+Code-hosting Settings (2026-10-08): `GET /api/v1/forge/connection` and its project alias
+`GET /api/v1/p/:projectId/forge/connection` return `{kind, host, repository, url, status,
+reason}`. Nullable identity/reason fields are always present. `status` is `unconfigured`,
+`untested`, `available`, `unavailable` or `demo`. Reads inspect local identity only.
+Optional `?test=1` requests a fresh bounded, read-only CLI repository probe, sharing any
+in-flight probe. Unknown hosts are never probed. No tokens, raw remotes or upstream
+errors are returned. No credential, git-remote or vendor mutation is performed.
+
 Forge extension (2026-10-08): health `forge.kind` and project `forge` also accept `gitlab`.
 Existing `/api/v1/github` and scoped aliases retain their wire shapes and route names,
 but list/search dispatch to the selected GitHub or GitLab driver. GitLab MRs use the

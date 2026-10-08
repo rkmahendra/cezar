@@ -4,6 +4,19 @@ Cezar uses the repository's `origin` plus existing CLI logins. Linear is a separ
 project issue-tracker connection, so a Linear team can drive a GitLab repository.
 No repository `.env` or cezar forge configuration file is required.
 
+Open **Project Settings → Code hosting** to see the detected provider, hostname and
+repository, with a server-side CLI login command. For an unknown host, choose which
+CLI's setup instructions to show. This selection is not saved and does not classify
+the host. Log in over SSH as cezar's OS user, then **Reload connection** and **Test
+connection**. The test bypasses the driver's completed-result cache, shares any
+in-flight probe, and checks repository read access only. It never pushes, mutates
+vendor state or proves push permission. Merely opening Settings performs no vendor
+request. Demo mode reports **Demo only**, never a real connection success.
+
+This first UI layer guides and tests the existing CLI connection. It does not collect
+tokens, execute login commands, change remotes or provide browser-only OAuth onboarding.
+Those require a separate credential-management design. Existing CLI-only setups keep working.
+
 | Service | Connection | Cezar support |
 | --- | --- | --- |
 | GitHub.com | `gh auth login --hostname github.com` | Issues, PRs, draft publication, existing checks/review tools |
