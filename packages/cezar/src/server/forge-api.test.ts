@@ -24,13 +24,17 @@ describe('forge API routing', () => {
   it('lists GitLab via its driver and distinguishes an outage from an empty list', async () => {
     const issues = vi.fn().mockResolvedValue([]);
     const prs = vi.fn().mockResolvedValue([]);
-    mocks.resolve.mockReturnValue({ kind: 'gitlab', detect: async () => ({ available: true }), listIssues: issues, listPRs: prs });
+    const detect = vi.fn().mockResolvedValue({ available: true });
+    mocks.resolve.mockReturnValue({ kind: 'gitlab', detect, listIssues: issues, listPRs: prs });
     expect(githubDataSchema.parse(await fetchForge('/repo', true, 20))).toMatchObject({ available: true, issues: [], prs: [] });
+    expect(detect).toHaveBeenCalledWith({ refresh: true });
     expect(prs).toHaveBeenCalledWith({ refresh: true, limit: 20 });
     prs.mockRejectedValue(new Error('vendor body secret must not escape'));
     const failed = await fetchForge('/repo');
     expect(failed.available).toBe(false);
     expect(JSON.stringify(failed)).not.toContain('secret');
+    detect.mockRejectedValue(new Error('vendor body secret must not escape'));
+    expect(await fetchForge('/repo', true)).toMatchObject({ available: false, issues: [], prs: [] });
     expect(mocks.list).not.toHaveBeenCalled();
   });
 

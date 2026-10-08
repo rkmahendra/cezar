@@ -4025,6 +4025,21 @@ export function createApp(deps: ServerDeps) {
 
   // ---- runs ----------------------------------------------------------------
 
+  // Cover Continue/cleanup too: neither may race publication while it awaits the forge.
+  // Key by checkout so route aliases and records sharing a worktree share the gate.
+  // ponytail: one cockpit process; native git locks still arbitrate external CLI operations.
+  const taskMutations = new Set<string>();
+  const serializeTaskMutation = async <P extends string>(c: Context<ProjectApiEnv, P>, next: Next) => {
+    const { store, dataDir } = c.get('project');
+    const id = c.req.param('id');
+    if (!id) return next();
+    const run = store.getRun(id);
+    const key = resolve(run?.worktreePath ?? join(dataDir, 'runs', id));
+    if (taskMutations.has(key)) return c.json({ error: 'another task mutation is in progress; wait and retry' }, 409);
+    taskMutations.add(key);
+    try { await next(); } finally { taskMutations.delete(key); }
+  };
+
   // Additive `usage` field (#348): the latest CPU/RSS/proc-count sample of the
   // run's live process tree — absent for finished runs and when `ps` yields
   // nothing. The stored record itself is never touched.
@@ -4293,7 +4308,7 @@ export function createApp(deps: ServerDeps) {
 
     // Live-session participation (spec 002): deliver a user message (text +
     // pasted screenshots) into the run's open claude session.
-    .post('/runs/:id/messages', jsonZodValidator(messageSchema), async (c) => {
+    .post('/runs/:id/messages', jsonZodValidator(messageSchema), serializeTaskMutation, async (c) => {
       const { store, manager } = c.get('project');
       const id = c.req.param('id');
       const run = store.getRun(id);
@@ -4419,7 +4434,7 @@ export function createApp(deps: ServerDeps) {
     })
 
     // "Continue" (spec 003): reopen a finished run's session in-process.
-    .post('/runs/:id/continue', jsonZodValidator(continueSchema, { absent: ({}) }), async (c) => {
+    .post('/runs/:id/continue', jsonZodValidator(continueSchema, { absent: ({}) }), serializeTaskMutation, async (c) => {
       const { root: repoRoot, store, manager } = c.get('project');
       const id = c.req.param('id');
       const run = store.getRun(id);
@@ -4454,7 +4469,7 @@ export function createApp(deps: ServerDeps) {
 
     // "Open in terminal" (spec 003): hand the session off to a real terminal —
     // in the task's worktree when it still exists (spec 006).
-    .post('/runs/:id/open-in-cli', async (c) => {
+    .post('/runs/:id/open-in-cli', serializeTaskMutation, async (c) => {
       const { root: repoRoot, store } = c.get('project');
       const id = c.req.param('id');
       const run = store.getRun(id);
@@ -4772,24 +4787,26 @@ export function createApp(deps: ServerDeps) {
       });
     })
 
-    .post('/runs/:id/git/commit', jsonZodValidator(gitCommitSchema), async (c) => {
+    .post('/runs/:id/git/commit', jsonZodValidator(gitCommitSchema), serializeTaskMutation, async (c) => {
       const { store } = c.get('project');
       const run = store.getRun(c.req.param('id'));
       if (!run) return c.json({ error: 'not found' }, 404);
       const worktree = worktreeOf(run);
       if (!worktree) return c.json({ error: NO_WORKTREE }, 409);
+      if (run.status === 'running') return c.json({ error: 'the agent is still working in this worktree; wait for review' }, 409);
       const parsed = { data: c.req.valid('json') };
       const result = await commitAll(worktree, parsed.data.message);
       if (!result.ok) return c.json({ error: result.error }, 409);
       return c.json({ committed: true, sha: result.sha });
     })
 
-    .post('/runs/:id/git/push', async (c) => {
+    .post('/runs/:id/git/push', serializeTaskMutation, async (c) => {
       const { root: repoRoot, store } = c.get('project');
       const run = store.getRun(c.req.param('id'));
       if (!run) return c.json({ error: 'not found' }, 404);
       const worktree = worktreeOf(run);
       if (!worktree) return c.json({ error: NO_WORKTREE }, 409);
+      if (run.status === 'running') return c.json({ error: 'the agent is still working in this worktree; wait for review' }, 409);
       const result = await pushCurrentBranch(worktree);
       if (!result.ok) return c.json({ error: result.error }, 409);
       // A push is the event that changes what the chips say about this task's pull requests —
@@ -4806,11 +4823,10 @@ export function createApp(deps: ServerDeps) {
       });
     })
 
-    // Draft PR from the review gate (spec 009): final autosave → push →
-    // `gh pr create --draft`; on success the run completes as done with the PR
-    // badge. Failures come back as 409 with a `manual` merge command the GUI
-    // shows next to the toast. CEZ_DRY_RUN=1 fakes the URL (no push, no gh).
-    .post('/runs/:id/pr', async (c) => {
+    // Explicit draft publication from the review gate. Failure offers inspection,
+    // never a merge command: publication consent does not authorize merging.
+    // CEZ_DRY_RUN=1 fakes the URL without a push or forge mutation.
+    .post('/runs/:id/pr', serializeTaskMutation, async (c) => {
       const { root: repoRoot, dataDir, store, manager } = c.get('project');
       const id = c.req.param('id');
       const run = store.getRun(id);
@@ -4832,7 +4848,7 @@ export function createApp(deps: ServerDeps) {
         handoffText: readHandoff(dataDir, id),
       });
       if (!outcome.ok) {
-        return c.json({ error: outcome.error, manual: `git merge ${run.branch}` }, 409);
+        return c.json({ error: outcome.error, manual: 'git status --short' }, 409);
       }
       // A number the cockpit asked about BEFORE the pull request existed is cached as "this
       // repository has no such number" — which is exactly what a `CEZ:PR=901` marker declared
@@ -4846,14 +4862,14 @@ export function createApp(deps: ServerDeps) {
       });
       store.appendEvent(id, {
         type: 'note',
-        message: `draft ${forge.kind === 'gitlab' ? 'MR' : 'PR'} created: ${outcome.url}${outcome.dryRun ? ' (dry run, nothing published)' : ''}`,
+        message: `${forge.kind === 'gitlab' ? 'MR' : 'PR'} publication confirmed: ${outcome.url}${outcome.dryRun ? ' (dry run, nothing published)' : ''}`,
       });
       return c.json({ url: outcome.url, dryRun: outcome.dryRun }, 201);
     })
 
     // Archived tasks keep their worktree for inspection; this is the explicit
     // "🧹 Remove worktree" cleanup (spec 006).
-    .post('/runs/:id/remove-worktree', async (c) => {
+    .post('/runs/:id/remove-worktree', serializeTaskMutation, async (c) => {
       const { root: repoRoot, store, manager } = c.get('project');
       const id = c.req.param('id');
       const run = store.getRun(id);
@@ -4864,7 +4880,7 @@ export function createApp(deps: ServerDeps) {
       return c.json({ removed: true });
     })
 
-    .delete('/runs/:id', async (c) => {
+    .delete('/runs/:id', serializeTaskMutation, async (c) => {
       const { root: repoRoot, store, manager } = c.get('project');
       const id = c.req.param('id');
       if (manager.isActive(id)) return c.json({ error: 'run is active — cancel it first' }, 409);

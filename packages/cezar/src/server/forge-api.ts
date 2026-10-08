@@ -11,9 +11,9 @@ export async function fetchForge(root: string, refresh = false, limit = 30): Pro
   const forge = resolveForge(await getRepoInfo(root));
   if (forge?.kind === 'github' || (!forge && process.env.CEZ_DRY_RUN === '1')) return github.fetchGithub(root, refresh, limit);
   if (!forge) return { available: false, reason: 'No supported forge remote detected', issues: [], prs: [] };
-  const availability = await forge.detect();
-  if (!availability.available) return { ...availability, issues: [], prs: [] };
   try {
+    const availability = await forge.detect({ refresh });
+    if (!availability.available) return { ...availability, issues: [], prs: [] };
     const [issues, prs] = await Promise.all([forge.listIssues({ refresh, limit }), forge.listPRs({ refresh, limit })]);
     return { available: true, issues, prs, syncedAt: new Date().toISOString() };
   } catch {

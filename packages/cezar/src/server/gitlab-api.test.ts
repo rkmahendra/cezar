@@ -30,7 +30,7 @@ it('publishes a GitLab draft through both route mounts and never merges', async 
   active = false;
   for (const prefix of ['/api/v1', '/api/v1/p/default']) {
     const response = await post(prefix);
-    expect(response.status).toBe(201);
+    expect(response.status, await response.clone().text()).toBe(201);
     expect(await response.json()).toEqual({ url: 'https://gitlab.com/group/sub/app/-/merge_requests/777', dryRun: true });
   }
   expect(store.getRun(run.id)).toMatchObject({ status: 'done', pullRequestUrl: 'https://gitlab.com/group/sub/app/-/merge_requests/777' });
