@@ -667,7 +667,7 @@ export function GithubRoute({
             title={number === null ? 'Nothing selected' : 'Not found'}
             subtitle={
               number === null
-                ? `No open ${view === 'issues' ? 'issues' : 'pull requests'} to show.`
+                ? `No open ${view === 'issues' ? 'issues' : requestLabel} to show.`
                 : // Since #730 a closed or merged item IS reachable — type its number into the
                   // search box and the tab asks GitHub directly — so the honest advice is to
                   // search, not the old "it may be closed" shrug.
