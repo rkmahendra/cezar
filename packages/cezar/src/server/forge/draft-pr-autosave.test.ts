@@ -44,7 +44,7 @@ describe('createDraftPr pre-PR autosave (#471 follow-up)', () => {
     rmSync(repo, { recursive: true, force: true });
   });
 
-  it('disables terminal credential prompts for raw git pushes', async () => {
+  it('refuses a local bare origin before publication hooks can run', async () => {
     vi.stubEnv('CEZ_DRY_RUN', '0');
     vi.stubEnv('GIT_TERMINAL_PROMPT', '1');
     const remote = mkdtempSync(join(tmpdir(), 'cez-push-remote-'));
@@ -56,7 +56,7 @@ describe('createDraftPr pre-PR autosave (#471 follow-up)', () => {
         '#!/bin/sh\necho "prompt-setting=$GIT_TERMINAL_PROMPT" >&2\nexit 1\n', { mode: 0o755 });
       const outcome = await createDraftPr(input());
       expect(outcome.ok).toBe(false);
-      expect(outcome.ok === false && outcome.error).toContain('prompt-setting=0');
+      expect(outcome.ok === false && outcome.error).toContain('origin is not a known GitHub host');
     } finally {
       rmSync(remote, { recursive: true, force: true });
     }

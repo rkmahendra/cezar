@@ -1,10 +1,19 @@
-import { describe, expect, it } from 'vitest';
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+const { createGitlabDriver, execFile, execFileSync } = vi.hoisted(() => ({
+  createGitlabDriver: vi.fn(() => ({ kind: 'gitlab' })), execFile: vi.fn(), execFileSync: vi.fn(),
+}));
+vi.mock('./gitlab.ts', () => ({ createGitlabDriver }));
+vi.mock('node:child_process', () => ({ execFile, execFileSync }));
 import type { RepoInfo } from '../git.ts';
-import { forgeKindOfRemote, parseRemote, resolveForge } from './index.ts';
+import { forgeKindOfRemote, forgeWebRoot, parseRemote, resolveForge } from './index.ts';
 
 /** Forge resolution (spec §"Forge-driver seam"): remote host → driver | null. */
 
 const info = (remote?: string): RepoInfo => ({ root: '/repo', branch: 'main', remote });
+afterEach(() => { vi.unstubAllEnvs(); vi.clearAllMocks(); });
 
 describe('parseRemote', () => {
   it.each([
@@ -17,7 +26,8 @@ describe('parseRemote', () => {
     ['git://github.com/acme/demo.git', { host: 'github.com', owner: 'acme', repo: 'demo' }],
     ['https://GitHub.com/acme/demo.git', { host: 'github.com', owner: 'acme', repo: 'demo' }],
     ['https://github.com/acme/demo/', { host: 'github.com', owner: 'acme', repo: 'demo' }],
-    ['git@gitlab.com:group/sub/project.git', { host: 'gitlab.com', owner: 'sub', repo: 'project' }],
+    ['git@gitlab.com:group/sub/project.git', { host: 'gitlab.com', owner: 'group/sub', repo: 'project' }],
+    ['https://code.example:8443/group/sub/project.git', { host: 'code.example:8443', owner: 'group/sub', repo: 'project' }],
   ])('parses %s', (remote, expected) => {
     expect(parseRemote(remote)).toEqual(expected);
   });
@@ -38,7 +48,7 @@ describe('forgeKindOfRemote', () => {
   it.each([
     ['https://github.com/acme/demo.git', 'github'],
     ['git@github.com:acme/demo.git', 'github'],
-    ['git@gitlab.com:acme/demo.git', null],
+    ['git@gitlab.com:acme/demo.git', 'gitlab'],
     ['https://git.example.com/acme/demo.git', null],
     ['/srv/git/demo.git', null],
     [undefined, null],
@@ -56,8 +66,28 @@ describe('resolveForge', () => {
     expect(resolveForge(info('git@github.com:acme/demo.git'))?.kind).toBe('github');
   });
 
-  it('returns null for an unknown forge host (GitLab lands here later)', () => {
-    expect(resolveForge(info('git@gitlab.com:acme/demo.git'))).toBeNull();
+  it('maps public GitLab including nested groups', () => {
+    expect(resolveForge(info('git@gitlab.com:group/sub/demo.git'))?.kind).toBe('gitlab');
+    expect(createGitlabDriver).toHaveBeenCalledWith('/repo', { host: 'gitlab.com', owner: 'group/sub', repo: 'demo' });
+  });
+
+  it('routes native enterprise inventories without spawning and strips link credentials', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'forge-routing-'));
+    try {
+      vi.stubEnv('GH_CONFIG_DIR', dir); vi.stubEnv('GLAB_CONFIG_DIR', dir);
+      writeFileSync(join(dir, 'hosts.yml'), 'code.example: { user: alice }');
+      writeFileSync(join(dir, 'config.yml'), 'hosts: { "lab.example:8443": { user: bob } }');
+      const gh = 'https://secret:token@code.example/o/r.git';
+      const lab = 'https://secret:token@lab.example:8443/group/sub/r.git';
+      expect(forgeKindOfRemote(gh)).toBe('github');
+      expect(resolveForge(info(gh))?.viewUrl('pr', 2)).toBe('https://code.example/o/r/pull/2');
+      expect(forgeKindOfRemote(lab)).toBe('gitlab');
+      expect(resolveForge(info(lab))?.kind).toBe('gitlab');
+      expect(createGitlabDriver).toHaveBeenCalledWith('/repo', { host: 'lab.example:8443', owner: 'group/sub', repo: 'r' });
+      expect(forgeWebRoot(lab)).toBe('https://lab.example:8443/group/sub/r');
+      expect(forgeWebRoot('https://lab.example/group/sub/r')).toBeNull();
+      expect(execFile).not.toHaveBeenCalled(); expect(execFileSync).not.toHaveBeenCalled();
+    } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 
   it('returns null for a self-hosted host', () => {

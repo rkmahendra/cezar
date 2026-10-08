@@ -10,7 +10,7 @@ vi.mock('node:child_process', async (importOriginal) => {
   execFileMock.mockImplementation((...args: unknown[]) =>
     (actual.execFile as (...a: unknown[]) => unknown)(...args),
   );
-  return { ...actual, execFile: (...args: unknown[]) => execFileMock(...args) };
+  return { ...actual, execFile: (...args: unknown[]) => execFileMock(...args), execFileSync: () => 'https://github.com/o/r.git' };
 });
 
 import {
@@ -993,7 +993,7 @@ describe('fetchGithubComments timeline integration (#525)', () => {
     execFileMock.mockImplementation((...args: unknown[]) => {
       const argv = args[1] as string[];
       const cb = args[args.length - 1] as (e: unknown, r: unknown) => void;
-      const path = argv.find((a) => a.includes('repos/{owner}/{repo}')) ?? '';
+      const path = argv.find((a) => a.includes('repos/o/r')) ?? '';
       const ok = (v: unknown) => cb(null, { stdout: JSON.stringify(v), stderr: '' });
       try {
         if (path.includes('/timeline')) {
@@ -1226,7 +1226,7 @@ describe('fetchGithubComments timeline integration (#525)', () => {
       const ok = (v: unknown) => cb(null, { stdout: typeof v === 'string' ? v : JSON.stringify(v), stderr: '' });
       if (argv[0] === 'repo') return ok('o/r');
       if (argv[1] === 'graphql') return ok({ data: { repository: { c0: { statusCheckRollup: { state: 'SUCCESS' } } } } });
-      const path = argv.find((a) => a.includes('repos/{owner}/{repo}')) ?? '';
+      const path = argv.find((a) => a.includes('repos/o/r')) ?? '';
       if (path.includes('/timeline')) {
         return ok([{ event: 'committed', created_at: null, sha: commitSha, message: 'ship it', author: { name: 'Ada', date: '2026-01-01T00:00:00Z' } }]);
       }
@@ -1249,7 +1249,7 @@ describe('fetchGithubComments timeline integration (#525)', () => {
       const ok = (v: unknown) => cb(null, { stdout: typeof v === 'string' ? v : JSON.stringify(v), stderr: '' });
       if (argv[0] === 'repo') return ok('o/r');
       if (argv[1] === 'graphql') return cb(new Error('HTTP 502'), null); // rollup fails
-      const path = argv.find((a) => a.includes('repos/{owner}/{repo}')) ?? '';
+      const path = argv.find((a) => a.includes('repos/o/r')) ?? '';
       if (path.includes('/timeline')) {
         return ok([{ event: 'committed', created_at: null, sha: commitSha, author: { name: 'Ada', date: '2026-01-01T00:00:00Z' } }]);
       }
