@@ -1,4 +1,4 @@
-import { cronOf, type AutomationDefinition, type AutomationDispatch, type AutomationEvent, type AutomationFilters, type AutomationSchedule } from '@open-mercato/cezar-api-client'
+import { cronOf, type AutomationDefinition, type AutomationEvent, type AutomationFilters, type AutomationSchedule, type CreateAutomationInput } from '@open-mercato/cezar-api-client'
 
 /**
  * The editor's "Copy as CLI" card (spec 2026-09-14-automations-redesign Q1): the flag form of
@@ -18,14 +18,7 @@ export interface CliDefinition {
   events?: AutomationEvent[]
   intervalSeconds?: number
   filters?: Partial<AutomationFilters>
-  task: {
-    prompt: string
-    workflow?: string
-    runner?: string
-    model?: string
-    autonomous?: boolean
-    dispatch?: AutomationDispatch
-  }
+  task: Omit<CreateAutomationInput['task'], 'runner'> & { runner?: string }
   enable?: boolean
 }
 

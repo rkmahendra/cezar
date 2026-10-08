@@ -103,7 +103,12 @@ export function AutomationEditor({ data, automation, actions, onBack, onSaved, o
     setError(null)
   }, [automation, revision])
 
-  const patch = (next: Partial<EditorDraft>) => setDraft((current) => ({ ...current, ...next }))
+  const patch = (next: Partial<EditorDraft>) => setDraft((current) => ({
+    ...current, ...next,
+    ...((next.kind !== undefined && next.kind !== current.kind)
+      || (next.trackerTrigger !== undefined && JSON.stringify(next.trackerTrigger.association) !== JSON.stringify(current.trackerTrigger?.association))
+      ? { linearWorkflow: false } : {}),
+  }))
   const timeZone = data?.timeZone ?? 'UTC'
   const githubAvailable = data?.available !== false
   const dispatchAvailable = health.data?.capabilities.dispatch === true
@@ -242,6 +247,15 @@ export function AutomationEditor({ data, automation, actions, onBack, onSaved, o
             </Section>
 
             <Section title="What to run">
+              {draft.kind === 'tracker' && draft.trackerTrigger?.association.kind === 'linear' ? (
+                <div className="space-y-2 rounded-md border border-border p-3 text-sm">
+                  <label className="flex items-start gap-2">
+                    <input type="checkbox" checked={draft.linearWorkflow} onChange={event => patch({ linearWorkflow: event.target.checked })} />
+                    <span>Allow Linear workflow updates</span>
+                  </label>
+                  <p className="text-xs text-muted-foreground">Move each matched issue to its team's unique in-progress state before agent work and link the verified PR/MR after you publish. Ambiguous states block work. The agent also receives this connection's full Linear API permissions. Existing started states stay unchanged. No automatic Done status, push or merge.</p>
+                </div>
+              ) : null}
               <div data-slot="editor-prompt-templates" className="flex flex-wrap items-center gap-1.5 text-xs text-soft-foreground">
                 <FileTextIcon aria-hidden="true" className="size-3" />
                 Prompt templates

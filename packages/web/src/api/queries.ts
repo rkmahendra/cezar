@@ -2092,8 +2092,10 @@ export function useReferenceStatuses(
   refs: readonly ReferenceStatusRequest[],
   enabled = true,
 ): ReferenceStatusLookup {
-  const projects = useProjects().data
-  const health = useHealth().data
+  // These readers must not restart failed bootstrap queries when a fallback route mounts.
+  // The shell owns fetching; disabled observers still receive its cache updates.
+  const projects = useQuery({ queryKey: workspaceQueryKeys.projects, queryFn: ({ signal }) => getProjects({ signal }), enabled: false }).data
+  const health = useQuery({ queryKey: queryKeys.health, queryFn: ({ signal }) => getHealth({ signal }), enabled: false }).data
   const gitlabProjects = new Set(projects?.projects?.filter(project => project.forge === 'gitlab').map(project => project.id))
   if (health?.forge?.kind === 'gitlab') {
     gitlabProjects.add('default')

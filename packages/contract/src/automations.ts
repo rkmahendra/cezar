@@ -132,6 +132,8 @@ export const automationTaskSchema = createRunInputBaseSchema
     variants: z.union([z.literal(1), z.literal(2), z.literal(3)]).optional(),
     systemPrompt: z.string().optional(),
     dispatch: automationDispatchSchema.optional(),
+    /** Explicit consent to server-managed Linear start/status and publication linking. */
+    linearWorkflow: z.boolean().optional(),
   });
 export type AutomationTask = z.infer<typeof automationTaskSchema>;
 

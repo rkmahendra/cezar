@@ -143,6 +143,18 @@ const fillRequired = (name = 'Nightly bump', prompt = 'Bump the deps.') => {
 // ---- new ------------------------------------------------------------------------------------
 
 describe('AutomationEditor — new', () => {
+  it('requires explicit Linear workflow consent and sends it only after checking the option', async () => {
+    const association = { kind: 'linear' as const, source: { id: 'org', webUrl: 'https://linear.app/acme' }, externalId: '11111111-1111-4111-8111-111111111111', externalName: 'Team', connectionId: '22222222-2222-4222-8222-222222222222' }
+    const sent = stubFetch({ 'GET /api/v1/tracker/automation-options': () => jsonResponse({ available: true, association, events: ['issue.opened'], statuses: [], labels: [], limitations: [] }) })
+    renderEditor({ automation: { ...EXISTING, enabled: false, kind: 'tracker', trackerTrigger: { association, events: ['issue.opened'] }, task: { prompt: 'Implement {{tracker.key}}', workflow: 'quick-task' } } })
+    const consent = screen.getByRole('checkbox', { name: 'Allow Linear workflow updates' }) as HTMLInputElement
+    expect(consent.checked).toBe(false)
+    expect(screen.getByText(/full Linear API permissions/)).not.toBeNull()
+    fireEvent.click(consent)
+    await waitFor(() => expect((saveButton() as HTMLButtonElement).disabled).toBe(false))
+    fireEvent.click(saveButton())
+    await waitFor(() => expect(sent.find(request => request.method === 'PUT')?.body).toMatchObject({ task: { linearWorkflow: true } }))
+  })
   it('opens with the palette, a paused daily draft, and a save disabled until name and prompt', () => {
     stubFetch()
     renderEditor()

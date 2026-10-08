@@ -431,9 +431,10 @@ type AutomationEditableBody = z.infer<typeof automationEditableSchema>;
  * schedule and carries no GitHub filter.
  */
 function automationKindIssue(body: AutomationEditableBody, kind: 'github' | 'schedule' | 'tracker'): string | null {
-  // Tracker automations have no create/edit route yet (2026-09-19): hand-authored into
-  // `automations.json` only. Refuse explicitly rather than misapplying the GitHub filter rules
-  // below to one that reaches this far (e.g. a PUT that omits `kind` on an existing tracker row).
+  if (body.task.linearWorkflow && (kind !== 'tracker'
+    || body.trackerTrigger?.association.kind !== 'linear' || (body.task.variants ?? 1) !== 1)) {
+    return 'Linear workflow updates require a Linear tracker automation with one variant';
+  }
   if (kind === 'tracker') return body.trackerTrigger ? null : 'Choose an event to finish configuring this automation';
   if (kind === 'schedule') {
     if (!body.schedule) return 'a scheduled automation needs a schedule';
