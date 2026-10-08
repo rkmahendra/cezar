@@ -1,8 +1,9 @@
-import { execFile } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import { promisify } from 'node:util';
 import { z } from 'zod';
 import { REFERENCE_STATUS_MAX } from '@open-mercato/cezar-contract';
 import { autosaveCommit } from '../../git-worktree.ts';
+import { forgeKindOfHost, githubHostEnv, normalizeForgeHost, parseRemote } from './host-discovery.ts';
 import type {
   DraftPrInput,
   DraftPrOutcome,
@@ -36,6 +37,44 @@ import type {
 
 const exec = promisify(execFile);
 
+/** Explicit targets keep concurrent projects, changed remotes, and their caches separate. */
+export type GithubTarget = string | (GithubRepoRef & { root: string });
+
+function githubTarget(target: GithubTarget): Exclude<GithubTarget, string> {
+  if (typeof target !== 'string') return target;
+  // Legacy route helpers pass only a root. Resolve LOCAL origin before selecting credentials.
+  // Never fall back to GH_HOST/GH_REPO or an unrelated authenticated remote on resolution failure.
+  try {
+    const remote = execFileSync('git', ['remote', 'get-url', 'origin'], {
+      cwd: target, encoding: 'utf8', timeout: 2_000, maxBuffer: 16 * 1024, stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    const ref = parseRemote(remote);
+    if (ref && !ref.owner.includes('/') && forgeKindOfHost(ref.host) === 'github') return { root: target, ...ref };
+  } catch { /* No local origin means no GitHub capability. */ }
+  return { root: target, host: '', owner: '', repo: '' };
+}
+
+function githubKey(target: GithubTarget): string {
+  const ref = githubTarget(target);
+  return `${ref.root}\0${ref.host ?? 'github.com'}/${ref.owner}/${ref.repo}`;
+}
+
+function githubCommand(target: GithubTarget, args: string[]): { args: string[]; cwd: string; env: NodeJS.ProcessEnv } {
+  const ref = githubTarget(target);
+  const host = normalizeForgeHost(ref.host ?? 'github.com');
+  if (!host || !/^[\w.-]+$/.test(ref.owner) || !/^[\w.-]+$/.test(ref.repo)) throw new Error('GitHub remote could not be resolved');
+  const env = githubHostEnv(host);
+  env.GH_REPO = `${host}/${ref.owner}/${ref.repo}`;
+  if (args[0] === 'api') {
+    const at = args.indexOf('--hostname');
+    if (at >= 0 && args[at + 1] !== host) throw new Error('GitHub API host does not match repository');
+    if (at < 0) args = [...args, '--hostname', host];
+    // Resolve REST placeholders ourselves: gh api must not consult another git remote.
+    args = args.map((arg) => arg.replaceAll('{owner}', ref.owner).replaceAll('{repo}', ref.repo));
+  }
+  return { args, cwd: ref.root, env };
+}
+
 export const GH_PR_DIFF_FILE_CAP = 300;
 export const GH_PR_PATCH_CAP = 512 * 1024;
 export const GH_PR_DIFF_JSON_CAP = 4 * 1024 * 1024;
@@ -68,16 +107,17 @@ export async function fetchPrFilePages(runPage: PrFilesPageRunner): Promise<unkn
 }
 
 export async function fetchGithubPrDiff(
-  repoRoot: string,
+  repoRoot: GithubTarget,
   number: number,
   refresh = false,
 ): Promise<ForgePrDiffResult> {
   if (process.env.CEZ_DRY_RUN === '1') return mockGithubPrDiff(number);
+  repoRoot = githubTarget(repoRoot);
   try {
     const head = ghPrHeadSchema.parse(
       JSON.parse(await gh(repoRoot, ['pr', 'view', String(number), '--json', 'headRefOid'])),
     ).headRefOid;
-    const key = `${repoRoot}\0${number}\0${head}`;
+    const key = `${githubKey(repoRoot)}\0${number}\0${head}`;
     const hit = prDiffCache.get(key);
     if (!refresh && hit && Date.now() - hit.at < CACHE_MS) return hit.data;
     const rows = z.array(ghPrFileSchema).parse(
@@ -273,9 +313,11 @@ export function rollupToChecks(rollup: z.infer<typeof ghStatusCheckRollup>): Git
   return 'passing';
 }
 
-async function gh(repoRoot: string, args: string[], timeout = 15_000): Promise<string> {
-  const { stdout } = await exec('gh', args, {
-    cwd: repoRoot,
+async function gh(repoRoot: GithubTarget, args: string[], timeout = 15_000): Promise<string> {
+  const scoped = githubCommand(repoRoot, args);
+  const { stdout } = await exec('gh', scoped.args, {
+    cwd: scoped.cwd,
+    env: scoped.env,
     timeout,
     maxBuffer: 50 * 1024 * 1024,
   });
@@ -385,10 +427,11 @@ const LIST_CACHE_MAX = 50;
 const CACHE_MS = 60_000;
 export const GH_MAX_LIMIT = 1000;
 
-export async function fetchGithub(repoRoot: string, refresh = false, limit = 30): Promise<GithubData> {
+export async function fetchGithub(repoRoot: GithubTarget, refresh = false, limit = 30): Promise<GithubData> {
   if (process.env.CEZ_DRY_RUN === '1') return mockGithub();
+  repoRoot = githubTarget(repoRoot);
   const capped = Math.min(Math.max(limit, 1), GH_MAX_LIMIT);
-  const hit = listCache.get(repoRoot);
+  const hit = listCache.get(githubKey(repoRoot));
   if (!refresh && hit && Date.now() - hit.at < CACHE_MS && hit.limit >= capped) {
     return hit.data;
   }
@@ -474,8 +517,8 @@ export async function fetchGithub(repoRoot: string, refresh = false, limit = 30)
       prs,
       labelColors,
     };
-    listCache.delete(repoRoot); // re-insert so this key becomes the newest
-    listCache.set(repoRoot, { at: Date.now(), limit: capped, data });
+    listCache.delete(githubKey(repoRoot)); // re-insert so this key becomes the newest
+    listCache.set(githubKey(repoRoot), { at: Date.now(), limit: capped, data });
     while (listCache.size > LIST_CACHE_MAX) {
       const oldest = listCache.keys().next().value;
       if (oldest === undefined) break;
@@ -608,7 +651,7 @@ function toSearchItem(
  * rest of the tab uses. Exported for unit tests.
  */
 export async function searchGithubItems(
-  repoRoot: string,
+  repoRoot: GithubTarget,
   kind: 'issue' | 'pr',
   query: string,
   limit = GH_SEARCH_MAX,
@@ -629,6 +672,7 @@ export async function searchGithubItems(
       .slice(0, capped);
     return { available: true, items, truncated: items.length >= capped };
   }
+  repoRoot = githubTarget(repoRoot);
   const labelColors: Record<string, string> = {};
   const numeric = trimmed.replace(/^#/, '');
   try {
@@ -1043,9 +1087,10 @@ export function __clearRepoHandleCacheForTests(): void {
 /** The `owner/name` for `repoRoot`, memoized. Returns null when the handle isn't a clean two-part
  *  slug or `gh` failed — the caller then skips checks entirely and commits render unglyphed. */
 export async function resolveRepoHandle(
-  repoRoot: string,
+  repoRoot: GithubTarget,
 ): Promise<{ owner: string; name: string } | null> {
-  const memo = repoHandleCache.get(repoRoot);
+  repoRoot = githubTarget(repoRoot);
+  const memo = repoHandleCache.get(githubKey(repoRoot));
   if (memo !== undefined) return memo;
   let handle: { owner: string; name: string } | null;
   try {
@@ -1056,7 +1101,7 @@ export async function resolveRepoHandle(
     // Transient — do NOT memoize, so the next thread retries.
     return null;
   }
-  repoHandleCache.set(repoRoot, handle); // includes the permanent negative
+  repoHandleCache.set(githubKey(repoRoot), handle); // includes the permanent negative
   return handle;
 }
 
@@ -1293,14 +1338,15 @@ export function __clearChecksCacheForTests(): void {
  * reason }` when `gh` or the handle is unavailable — never a throw, never a 5xx (plan rule 7).
  * Numbers are de-duplicated, validated, and capped at `GH_CHECKS_MAX`.
  */
-export async function fetchGithubChecks(repoRoot: string, numbers: number[]): Promise<GithubChecksData> {
+export async function fetchGithubChecks(repoRoot: GithubTarget, numbers: number[]): Promise<GithubChecksData> {
   if (process.env.CEZ_DRY_RUN === '1') return mockGithubChecks(numbers);
+  repoRoot = githubTarget(repoRoot);
   const wanted = [...new Set(numbers)].filter((n) => Number.isInteger(n) && n > 0).slice(0, GH_CHECKS_MAX);
   const checks: Record<number, ChecksGlyph> = {};
   const misses: number[] = [];
   const now = Date.now();
   for (const n of wanted) {
-    const hit = checksCache.get(`${repoRoot}\0${n}`);
+    const hit = checksCache.get(`${githubKey(repoRoot)}\0${n}`);
     if (hit && now - hit.at < CACHE_MS) checks[n] = hit.glyph;
     else misses.push(n);
   }
@@ -1319,7 +1365,7 @@ export async function fetchGithubChecks(repoRoot: string, numbers: number[]): Pr
       // Absent (unknown/closed PR) caches as `null` so a nonexistent number isn't re-queried.
       const glyph: ChecksGlyph = n in fetched ? fetched[n]! : null;
       checks[n] = glyph;
-      checksCache.set(`${repoRoot}\0${n}`, { at: now, glyph });
+      checksCache.set(`${githubKey(repoRoot)}\0${n}`, { at: now, glyph });
     }
     while (checksCache.size > CHECKS_CACHE_MAX) {
       const oldest = checksCache.keys().next().value;
@@ -1837,9 +1883,10 @@ export function __clearRefStatusCacheForTests(): void {
 /** Test-only: warm the cache the way the lazy route would have, so a reader can be tested
  *  without a forge behind it. */
 export function __seedRefStatusCacheForTests(
-  repoRoot: string,
+  repoRoot: GithubTarget,
   entries: Array<[number, ResolvedReference]>,
 ): void {
+  repoRoot = githubTarget(repoRoot);
   for (const [number, resolved] of entries) {
     refStatusCache.set(refStatusKey(repoRoot, number), { at: Date.now(), resolved });
   }
@@ -1860,7 +1907,7 @@ export function __seedRefStatusCacheForTests(
  * `recheckAfterMs` goes null, and the cockpit stops polling that batch entirely. Invalidating here
  * therefore REDUCES long-run traffic rather than adding to it.
  */
-export function forgetRefStatus(repoRoot: string, number: number): void {
+export function forgetRefStatus(repoRoot: GithubTarget, number: number): void {
   refStatusCache.delete(refStatusKey(repoRoot, number));
 }
 
@@ -1878,9 +1925,10 @@ export function forgetRefStatus(repoRoot: string, number: number): void {
  * it can look up every number a run mentions and let the client pick.
  */
 export function readCachedRefStatuses(
-  repoRoot: string,
+  repoRoot: GithubTarget,
   numbers: Iterable<number>,
 ): { prs: Record<number, ReferenceStatus>; issues: Record<number, ReferenceStatus> } {
+  repoRoot = githubTarget(repoRoot);
   const out = { prs: {} as Record<number, ReferenceStatus>, issues: {} as Record<number, ReferenceStatus> };
   const now = Date.now();
   for (const number of new Set(numbers)) {
@@ -2001,7 +2049,7 @@ const REF_STATUS_RETRY_MS = 5 * 60_000;
  * means the repo handle itself did not resolve — rethrows, so a real failure still degrades to
  * `{available: false}` instead of masquerading as "none of these exist".
  */
-function refStatusGraphql(repoRoot: string): GraphqlRunner {
+function refStatusGraphql(repoRoot: GithubTarget): GraphqlRunner {
   return async (query, variables) => {
     const args = ['api', 'graphql', '-f', `query=${query}`];
     for (const [key, value] of Object.entries(variables)) args.push('-f', `${key}=${value}`);
@@ -2025,14 +2073,15 @@ function refStatusGraphql(repoRoot: string): GraphqlRunner {
  * `gh` error into the payload's `reason` — "gh CLI not found — install it and run `gh auth login`"
  * is what the chip's tooltip now shows a user — and a `null` would erase which failure it was.
  */
-async function resolveRepoHandleStrict(repoRoot: string): Promise<{ owner: string; name: string } | null> {
-  const memo = repoHandleCache.get(repoRoot);
+async function resolveRepoHandleStrict(repoRoot: GithubTarget): Promise<{ owner: string; name: string } | null> {
+  repoRoot = githubTarget(repoRoot);
+  const memo = repoHandleCache.get(githubKey(repoRoot));
   if (memo !== undefined) return memo;
   // A throw here is transient and deliberately NOT memoized, exactly as in `resolveRepoHandle`.
   const handle = parseOwnerName(
     await gh(repoRoot, ['repo', 'view', '--json', 'nameWithOwner', '--jq', '.nameWithOwner']),
   );
-  repoHandleCache.set(repoRoot, handle); // includes the permanent negative
+  repoHandleCache.set(githubKey(repoRoot), handle); // includes the permanent negative
   return handle;
 }
 
@@ -2059,12 +2108,13 @@ function hasResolvedRepository(stdout: string): boolean {
  * why a chip whose kind the cockpit guessed wrong still gets the right status.
  */
 export async function fetchGithubRefStatus(
-  repoRoot: string,
+  repoRoot: GithubTarget,
   input: { prs?: number[]; issues?: number[] },
 ): Promise<GithubRefStatusData> {
   const asPrs = sanitizeRefNumbers(input.prs);
   const asIssues = sanitizeRefNumbers(input.issues);
   if (process.env.CEZ_DRY_RUN === '1') return mockGithubRefStatus(asPrs, asIssues);
+  repoRoot = githubTarget(repoRoot);
   const wanted = [...new Set([...asPrs, ...asIssues])];
 
   const resolved = { prs: {} as Record<number, ReferenceStatus>, issues: {} as Record<number, ReferenceStatus> };
@@ -2164,8 +2214,8 @@ export async function fetchGithubRefStatus(
 }
 
 /** NUL separator, as everywhere else here: two projects each having a #42 must not collide. */
-function refStatusKey(repoRoot: string, number: number): string {
-  return `${repoRoot}\0#${number}`;
+function refStatusKey(repoRoot: GithubTarget, number: number): string {
+  return `${githubKey(repoRoot)}\0#${number}`;
 }
 
 function sanitizeRefNumbers(numbers: number[] | undefined): number[] {
@@ -2204,14 +2254,15 @@ function mockGithubRefStatus(prs: number[], issues: number[]): GithubRefStatusDa
  * (BACKWARD_COMPATIBILITY.md §2) — see the top-up below for the one case that needed defending.
  */
 export async function fetchGithubComments(
-  repoRoot: string,
+  repoRoot: GithubTarget,
   kind: 'issue' | 'pr',
   number: number,
   refresh = false,
 ): Promise<ForgeCommentsData> {
   if (process.env.CEZ_DRY_RUN === '1') return mockGithubComments(kind);
   // NUL separator: cannot appear in a filesystem path, so roots can never alias.
-  const key = `${repoRoot}\0${kind}#${number}`;
+  repoRoot = githubTarget(repoRoot);
+  const key = `${githubKey(repoRoot)}\0${kind}#${number}`;
   const hit = commentsCache.get(key);
   if (!refresh && hit && Date.now() - hit.at < CACHE_MS) return hit.data;
   // PR conversation comments live on the issues endpoint too — always use it for the body thread.
@@ -2451,11 +2502,10 @@ function mockGithubComments(kind: 'issue' | 'pr'): ForgeCommentsData {
 // worktree's remote). Every failure maps to a one-line human error — the GUI
 // shows it as a toast plus the manual `git merge <branch>` fallback. Never throws.
 
-const PR_URL_RE = /https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/pull\/\d+/;
 const PUSH_TIMEOUT_MS = 60_000;
 const PROGRESS_LINES_MAX = 10;
 
-export async function createDraftPr(input: DraftPrInput): Promise<DraftPrOutcome> {
+export async function createDraftPr(input: DraftPrInput, intendedRef?: GithubRepoRef | null): Promise<DraftPrOutcome> {
   const { run } = input;
   const worktree = run.worktreePath;
   const branch = run.branch;
@@ -2489,8 +2539,23 @@ export async function createDraftPr(input: DraftPrInput): Promise<DraftPrOutcome
   if (!remote.ok || !remote.stdout.trim()) {
     return { ok: false, error: 'no git remote — add one (git remote add origin <url>) or merge the branch locally' };
   }
+  const ref = parseRemote(remote.stdout);
+  if (!ref || ref.owner.includes('/') || forgeKindOfHost(ref.host) !== 'github') {
+    return { ok: false, error: 'origin is not a known GitHub host' };
+  }
+  if (intendedRef && (ref.host !== (intendedRef.host ?? 'github.com') || ref.owner !== intendedRef.owner || ref.repo !== intendedRef.repo)) {
+    return { ok: false, error: 'worktree origin no longer matches the intended GitHub repository' };
+  }
+  const pushUrls = await execTool(['remote', 'get-url', '--push', '--all', 'origin'], worktree, 'git');
+  if (!pushUrls.ok || !pushUrls.stdout.trim() || pushUrls.stdout.trim().split(/\r?\n/).some((value) => {
+    const pushRef = parseRemote(value);
+    return !pushRef || pushRef.host !== ref.host || pushRef.owner !== ref.owner || pushRef.repo !== ref.repo;
+  })) return { ok: false, error: 'origin push URL does not match the intended GitHub repository' };
+  const validBranch = await execTool(['check-ref-format', '--branch', branch], worktree, 'git');
+  if (!validBranch.ok || branch.startsWith('-')) return { ok: false, error: 'invalid task branch' };
+  const target: GithubTarget = { root: worktree, ...ref };
 
-  const push = await execTool(['push', '-u', 'origin', branch], worktree, 'git', PUSH_TIMEOUT_MS);
+  const push = await execTool(['push', '-u', 'origin', branch], worktree, 'git', PUSH_TIMEOUT_MS, target);
   if (!push.ok) {
     return { ok: false, error: `git push failed — ${tail(push.stderr) || 'unknown error'}` };
   }
@@ -2507,6 +2572,7 @@ export async function createDraftPr(input: DraftPrInput): Promise<DraftPrOutcome
     worktree,
     'gh',
     PUSH_TIMEOUT_MS,
+    target,
   );
   if (!pr.ok) {
     if (pr.notFound) {
@@ -2517,11 +2583,19 @@ export async function createDraftPr(input: DraftPrInput): Promise<DraftPrOutcome
   }
 
   // gh prints the PR URL on stdout; some versions echo it to stderr instead.
-  const match = PR_URL_RE.exec(`${pr.stdout}\n${pr.stderr}`);
-  if (!match) {
+  const url = `${pr.stdout}\n${pr.stderr}`.match(/https:\/\/[^\s]+/g)?.find((candidate) => {
+    try {
+      const parsed = new URL(candidate);
+      return !parsed.username && !parsed.password && parsed.host === ref.host &&
+        parsed.pathname.startsWith(`/${ref.owner}/${ref.repo}/pull/`) &&
+        /^[1-9][0-9]*$/.test(parsed.pathname.slice(`/${ref.owner}/${ref.repo}/pull/`.length)) &&
+        !parsed.search && !parsed.hash;
+    } catch { return false; }
+  });
+  if (!url) {
     return { ok: false, error: 'gh pr create returned no PR URL — check `gh pr list` manually' };
   }
-  return { ok: true, url: match[0], dryRun: false };
+  return { ok: true, url, dryRun: false };
 }
 
 /**
@@ -2564,11 +2638,18 @@ interface ExecResult {
   notFound: boolean;
 }
 
-function execTool(args: string[], cwd: string, bin: string, timeoutMs = 30_000): Promise<ExecResult> {
+function execTool(args: string[], cwd: string, bin: string, timeoutMs = 30_000, target?: GithubTarget): Promise<ExecResult> {
   return new Promise((resolve) => {
+    let scoped: ReturnType<typeof githubCommand> | null;
+    try {
+      scoped = target ? githubCommand(target, args) : null;
+    } catch {
+      resolve({ ok: false, stdout: '', stderr: 'GitHub remote could not be resolved', notFound: false });
+      return;
+    }
     execFile(
       bin,
-      args,
+      scoped?.args ?? args,
       {
         cwd,
         timeout: timeoutMs,
@@ -2578,7 +2659,7 @@ function execTool(args: string[], cwd: string, bin: string, timeoutMs = 30_000):
         // piped stdio is not enough to stop it. Without this a `git push` that
         // cannot authenticate hangs for the whole timeout and surfaces as a
         // blank one-minute stall instead of git's own "could not read Username".
-        env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+        env: scoped?.env ?? { ...process.env, GIT_TERMINAL_PROMPT: '0' },
       },
       (err, stdout, stderr) =>
         resolve({
@@ -2605,18 +2686,19 @@ const detectCache = new Map<string, { at: number; result: ForgeAvailability }>()
 const detectInflight = new Map<string, Promise<ForgeAvailability>>();
 const DETECT_CACHE_MAX = 50;
 
-function detectGithub(repoRoot: string): Promise<ForgeAvailability> {
+function detectGithub(repoRoot: GithubTarget): Promise<ForgeAvailability> {
   if (process.env.CEZ_DRY_RUN === '1') return Promise.resolve({ available: true });
-  const hit = detectCache.get(repoRoot);
+  repoRoot = githubTarget(repoRoot);
+  const hit = detectCache.get(githubKey(repoRoot));
   if (hit && Date.now() - hit.at < CACHE_MS) return Promise.resolve(hit.result);
-  const inflight = detectInflight.get(repoRoot);
+  const inflight = detectInflight.get(githubKey(repoRoot));
   if (inflight) return inflight;
-  const probe = probeGithub(repoRoot).finally(() => detectInflight.delete(repoRoot));
-  detectInflight.set(repoRoot, probe);
+  const probe = probeGithub(repoRoot).finally(() => detectInflight.delete(githubKey(repoRoot)));
+  detectInflight.set(githubKey(repoRoot), probe);
   return probe;
 }
 
-async function probeGithub(repoRoot: string): Promise<ForgeAvailability> {
+async function probeGithub(repoRoot: GithubTarget): Promise<ForgeAvailability> {
   let result: ForgeAvailability;
   try {
     await gh(repoRoot, ['repo', 'view', '--json', 'nameWithOwner'], 5_000);
@@ -2630,8 +2712,8 @@ async function probeGithub(repoRoot: string): Promise<ForgeAvailability> {
         : firstLine(message),
     };
   }
-  detectCache.delete(repoRoot); // re-insert so this key becomes the newest
-  detectCache.set(repoRoot, { at: Date.now(), result });
+  detectCache.delete(githubKey(repoRoot)); // re-insert so this key becomes the newest
+  detectCache.set(githubKey(repoRoot), { at: Date.now(), result });
   while (detectCache.size > DETECT_CACHE_MAX) {
     const oldest = detectCache.keys().next().value;
     if (oldest === undefined) break;
@@ -2652,9 +2734,10 @@ async function probeGithub(repoRoot: string): Promise<ForgeAvailability> {
  * without it, every time the 60 s cache expired this returned `null` for one 5 s health poll,
  * dropping `forge.available` and blinking the sidebar item out until the background probe warmed.
  */
-export function detectGithubCached(repoRoot: string): ForgeAvailability | null {
+export function detectGithubCached(repoRoot: GithubTarget): ForgeAvailability | null {
   if (process.env.CEZ_DRY_RUN === '1') return { available: true };
-  const hit = detectCache.get(repoRoot);
+  repoRoot = githubTarget(repoRoot);
+  const hit = detectCache.get(githubKey(repoRoot));
   const fresh = hit && Date.now() - hit.at < CACHE_MS;
   if (!fresh) {
     void detectGithub(repoRoot).catch(() => {}); // revalidate off the request path
@@ -2820,7 +2903,7 @@ type MergeChecksTier = {
  * fails too does the tier go dark, and then it says so rather than looking like "no CI".
  */
 async function fetchMergeChecks(
-  repoRoot: string,
+  repoRoot: GithubTarget,
   repoRef: GithubRepoRef,
   number: number,
 ): Promise<MergeChecksTier> {
@@ -2860,7 +2943,7 @@ export function __clearMergeStateCacheForTests(): void {
 
 /** Exported for unit tests (#969): the split-call behaviour is only observable end to end. */
 export async function fetchPrMergeState(
-  repoRoot: string,
+  repoRoot: GithubTarget,
   repoRef: GithubRepoRef | null,
   number: number,
   refresh = false,
@@ -2889,7 +2972,8 @@ export async function fetchPrMergeState(
     };
   }
   if (!repoRef) return { available: false, reason: 'GitHub remote could not be resolved' };
-  const key = `${repoRoot}:${number}`;
+  repoRoot = { root: typeof repoRoot === 'string' ? repoRoot : repoRoot.root, ...repoRef };
+  const key = `${githubKey(repoRoot)}:${number}`;
   const hit = mergeStateCache.get(key);
   if (!refresh && hit && Date.now() - hit.at < MERGE_CACHE_MS) return hit.value;
   try {
@@ -2933,23 +3017,25 @@ export async function fetchPrMergeState(
   }
 }
 
-export function evictGithubProjectCaches(repoRoot: string): void {
-  listCache.delete(repoRoot);
+export function evictGithubProjectCaches(repoRoot: GithubTarget): void {
+  repoRoot = githubTarget(repoRoot);
+  listCache.delete(githubKey(repoRoot));
   mergeStateCache.forEach((_value, key) => {
-    if (key.startsWith(`${repoRoot}:`)) mergeStateCache.delete(key);
+    if (key.startsWith(`${githubKey(repoRoot)}:`)) mergeStateCache.delete(key);
   });
   commentsCache.forEach((_value, key) => {
-    if (key.startsWith(`${repoRoot}:`)) commentsCache.delete(key);
+    if (key.startsWith(`${githubKey(repoRoot)}\0`)) commentsCache.delete(key);
   });
 }
 
 async function mergePullRequest(
-  repoRoot: string,
+  repoRoot: GithubTarget,
   repoRef: GithubRepoRef | null,
   number: number,
   input: ForgeMergeInput,
 ): Promise<ForgeMergeResult> {
-  const key = `${repoRoot}:${number}`;
+  repoRoot = repoRef ? { root: typeof repoRoot === 'string' ? repoRoot : repoRoot.root, ...repoRef } : githubTarget(repoRoot);
+  const key = `${githubKey(repoRoot)}:${number}`;
   if (mergeInflight.has(key)) return { merged: false, status: 409, error: 'A merge is already in progress.', code: 'concurrent' };
   mergeInflight.add(key);
   try {
@@ -3003,7 +3089,8 @@ const GH_PR_STATES: Record<string, ForgePrStatus['state']> = {
   CLOSED: 'closed',
 };
 
-export function createGithubDriver(repoRoot: string, repoRef: GithubRepoRef | null): ForgeDriver {
+export function createGithubDriver(root: string, repoRef: GithubRepoRef | null): ForgeDriver {
+  const repoRoot: GithubTarget = repoRef ? { root, ...repoRef } : root;
   return {
     kind: 'github',
 
@@ -3022,12 +3109,14 @@ export function createGithubDriver(repoRoot: string, repoRef: GithubRepoRef | nu
 
     prDiff: (number, opts) => fetchGithubPrDiff(repoRoot, number, opts?.refresh),
 
-    createPR: (input) => createDraftPr(input),
+    createPR: (input) => createDraftPr(input, repoRef),
 
     // Null covers everything from "no PR yet" to "gh missing" — the callers
     // (Create PR → View PR flip) treat all of it as "nothing to link".
     prStatus: async (branch) => {
       if (process.env.CEZ_DRY_RUN === '1') return null;
+      // gh also accepts a full PR URL here, which would override GH_REPO and select another host.
+      if (!branch || branch.startsWith('-') || branch.includes(':')) return null;
       try {
         const out = await gh(repoRoot, ['pr', 'view', branch, '--json', 'number,url,state,isDraft,statusCheckRollup']);
         const pr = ghPrViewSchema.parse(JSON.parse(out));
@@ -3049,7 +3138,7 @@ export function createGithubDriver(repoRoot: string, repoRef: GithubRepoRef | nu
 
     viewUrl: (kind: ForgeRefKind, ref: string | number): string | null => {
       if (!repoRef) return null;
-      const base = `https://github.com/${repoRef.owner}/${repoRef.repo}`;
+      const base = `https://${repoRef.host ?? 'github.com'}/${repoRef.owner}/${repoRef.repo}`;
       // Branch names may contain '/' — encode per segment, keep the slashes.
       const path = String(ref).split('/').map(encodeURIComponent).join('/');
       switch (kind) {
@@ -3077,9 +3166,9 @@ const ghCreatedSchema = z.object({
 /** Search's explicit created ordering includes subsequently closed issues and merged PRs.
  * No user query reaches this operation; every qualifier is validated before building argv. */
 async function recentGithubCreated(
-  root: string, ref: GithubRepoRef | null, kind: 'issue' | 'pr', sinceDate: string,
+  root: GithubTarget, ref: GithubRepoRef | null, kind: 'issue' | 'pr', sinceDate: string,
 ): Promise<ForgeRecentCreatedData> {
-  if (!ref || !/^[a-zA-Z0-9.-]+$/.test(ref.host ?? 'github.com') ||
+  if (!ref || !normalizeForgeHost(ref.host ?? 'github.com') ||
       !/^[a-zA-Z0-9_.-]+$/.test(ref.owner) || !/^[a-zA-Z0-9_.-]+$/.test(ref.repo) ||
       !/^\d{4}-\d{2}-\d{2}$/.test(sinceDate) || !Number.isFinite(Date.parse(sinceDate))) {
     return { available: false, reason: 'GitHub repository or creation date is invalid', items: [] };
