@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { extractTaskRefs } from '../../../cezar/src/runs/task-refs'
 
-import type { TrackerItem } from '@open-mercato/cezar-api-client'
+import type { TrackerAssociation, TrackerItem } from '@open-mercato/cezar-api-client'
 
 import { TRACKER_TASK_LIMIT, trackerRunBody, trackerTaskPrompt } from './tracker-task'
 
@@ -21,6 +21,22 @@ const item: TrackerItem = {
 }
 
 describe('tracker handoff', () => {
+  it('delegates no credentials by default and binds explicit Linear opt-in for every composition mode', () => {
+    const linearWorkflow: TrackerAssociation = { kind: 'linear', source: { id: 'org', webUrl: 'https://linear.app/acme' },
+      externalId: '11111111-1111-4111-8111-111111111111', externalName: 'Team', connectionId: '22222222-2222-4222-8222-222222222222' }
+    expect(trackerRunBody(item, null, [], {}, {})).not.toHaveProperty('trackerWorkflow')
+    for (const [workflow, skills] of [['ship', []], [null, ['review']], [null, []]] as const) {
+      const body = trackerRunBody(item, workflow, skills, {}, { linearWorkflow, instruction: 'Keep this last.' })
+      expect(body.trackerWorkflow).toEqual({ kind: 'linear', sourceId: 'org', externalId: linearWorkflow.externalId,
+        connectionId: linearWorkflow.connectionId, itemId: item.id, delegateCredentials: true })
+      expect(body.task).toContain('Never mark Done')
+      expect(body.task).toContain('not guaranteed synchronization')
+      expect(body.task.endsWith('Keep this last.')).toBe(true)
+    }
+    expect(() => trackerRunBody(item, null, [], {}, { linearWorkflow: { ...linearWorkflow, connectionId: undefined } })).toThrow()
+    expect(() => trackerRunBody(item, null, [], {}, { linearWorkflow: { ...linearWorkflow, kind: 'jira' } })).toThrow()
+  })
+
   it('keeps full detail and puts the custom instruction last', () => {
     const longBody = 'x'.repeat(9_000)
     const prompt = trackerTaskPrompt(

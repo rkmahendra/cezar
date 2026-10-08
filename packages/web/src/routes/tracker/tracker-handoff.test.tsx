@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { MemoryRouter } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { Skill, TrackerItem } from '@open-mercato/cezar-api-client'
+import type { Skill, TrackerAssociation, TrackerItem } from '@open-mercato/cezar-api-client'
 import { createQueryClient } from '@/api/query-client'
 import { TrackerHandoff } from './tracker-handoff'
 
@@ -18,6 +18,36 @@ beforeEach(() => { Element.prototype.scrollIntoView = vi.fn(); vi.stubGlobal('Re
 afterEach(() => { cleanup(); vi.unstubAllGlobals() })
 
 describe('Tracker handoff', () => {
+  it('requires per-run consent, explains delegation, and clears it when connection identity changes', async () => {
+    const sent: Record<string, unknown>[] = []
+    vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      sent.push(JSON.parse(String(init?.body)))
+      return new Response(JSON.stringify({ id: 'run-1' }), { status: 200 })
+    }))
+    const association: TrackerAssociation = { kind: 'linear', source: { id: 'org', webUrl: 'https://linear.app/acme' }, externalId: '11111111-1111-4111-8111-111111111111', externalName: 'Team', connectionId: '22222222-2222-4222-8222-222222222222' }
+    const client = createQueryClient()
+    const view = (scope = association) => <MemoryRouter><QueryClientProvider client={client}>
+      <TrackerHandoff association={scope} item={ITEM} workflows={[]} skills={[]} />
+    </QueryClientProvider></MemoryRouter>
+    const rendered = render(view())
+    const checkbox = () => screen.getByRole('checkbox', { name: 'Allow Linear workflow writeback for this run' }) as HTMLInputElement
+    expect(checkbox().checked).toBe(false)
+    expect(screen.getByText(/key's full permissions/)).toBeTruthy()
+    expect(screen.getByText(/Continue the same run with the published URL/)).toBeTruthy()
+    fireEvent.click(checkbox())
+    rendered.rerender(view({ ...association, connectionId: '33333333-3333-4333-8333-333333333333' }))
+    expect(checkbox().checked).toBe(false)
+    fireEvent.click(screen.getByRole('button', { name: /Run agent/ }))
+    await waitFor(() => expect(sent).toHaveLength(1))
+    expect(sent[0]).not.toHaveProperty('trackerWorkflow')
+    await waitFor(() => expect((screen.getByRole('button', { name: /Run agent/ }) as HTMLButtonElement).disabled).toBe(false))
+    fireEvent.click(checkbox())
+    fireEvent.click(screen.getByRole('button', { name: /Run agent/ }))
+    await waitFor(() => expect(sent).toHaveLength(2))
+    expect(sent[1]?.trackerWorkflow).toMatchObject({ delegateCredentials: true, connectionId: '33333333-3333-4333-8333-333333333333' })
+    await waitFor(() => expect(checkbox().checked).toBe(false))
+  })
+
   it('requires a new acknowledgment when a refreshed lossy description changes, retaining the draft', () => {
     const client = createQueryClient()
     const view = (body: string) => <MemoryRouter><QueryClientProvider client={client}>

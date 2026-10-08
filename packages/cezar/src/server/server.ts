@@ -2,6 +2,7 @@ import {
   trackerWatchInputSchema, trackerWatchParamsSchema, trackerWatchQuerySchema,
   trackerCandidatesQuerySchema, trackerListQuerySchema, trackerSearchQuerySchema, trackerItemQuerySchema, trackerReadScope,
   trackerCredentialsSchema, trackerItemParamsSchema, trackerAssociationInputSchema, type TrackerChangedEvent,
+  trackerWorkflowInputSchema, trackerWorkflowSchema, type TrackerWorkflow,
 } from '@open-mercato/cezar-contract';
 import { createTrackerService } from './tracker/index.ts';
 import { TrackerWatches } from './tracker/watch.ts';
@@ -657,6 +658,7 @@ const streamSSENoBuffer: typeof streamSSE = (c, cb, onError) => {
 // the approved plan is posted as-is, never written to a file).
 const startRunSchema = z
   .object({
+    trackerWorkflow: trackerWorkflowInputSchema.optional(),
     workflow: z.string().min(1).optional(),
     steps: z.array(workflowStepSchema).min(1).max(8).optional(),
     // The primary agent prompt handed to the spawned runner. Bounded like the
@@ -4109,6 +4111,22 @@ export function createApp(deps: ServerDeps) {
     .post('/runs', jsonZodValidator(startRunSchema), async (c) => {
       const { root: repoRoot, dataDir, manager } = c.get('project');
       const parsed = { data: c.req.valid('json') };
+      let trackerWorkflow: TrackerWorkflow | undefined;
+      const requested = parsed.data.trackerWorkflow;
+      if (requested) {
+        if ((parsed.data.variants ?? 1) !== 1) return c.json({ error: 'Linear writeback supports one run, not parallel variants.' }, 400);
+        const driver = await trackers.driver(repoRoot, dataDir);
+        if ('available' in driver) return c.json({ error: driver.reason }, 409);
+        const association = driver.association;
+        if (association.kind !== requested.kind || association.source.id !== requested.sourceId
+          || association.externalId !== requested.externalId || association.connectionId !== requested.connectionId) {
+          return c.json({ error: 'Tracker connection or scope changed. Refresh the issue before granting writeback.' }, 409);
+        }
+        // getItem revalidates membership and refuses late results after connection/scope changes.
+        const detail = await driver.getItem(requested.itemId);
+        if (!detail.available) return c.json({ error: detail.reason }, detail.code === 'not_found' ? 404 : 409);
+        trackerWorkflow = trackerWorkflowSchema.parse({ association, itemId: detail.item.id, url: detail.item.url, delegateCredentials: true });
+      }
       if (agentModelsLocked(repoRoot) && parsed.data.model?.trim()) {
         return c.json({ error: AGENT_MODELS_LOCKED_ERROR }, 409);
       }
@@ -4155,6 +4173,7 @@ export function createApp(deps: ServerDeps) {
       const images = parsed.data.images?.map((image) => toPastedContent(image));
       const input = {
         task: parsed.data.task,
+        ...(trackerWorkflow ? { trackerWorkflow } : {}),
         model: parsed.data.model,
         runner: parsed.data.runner,
         agentProfile: parsed.data.agentProfile,

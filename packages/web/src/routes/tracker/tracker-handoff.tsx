@@ -3,7 +3,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { CheckIcon, PlayIcon, XIcon, ZapIcon } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 
-import type { Skill, TrackerItem, WorkflowDef } from '@open-mercato/cezar-api-client'
+import type { Skill, TrackerAssociation, TrackerItem, WorkflowDef } from '@open-mercato/cezar-api-client'
 import { createRun } from '@/api/client'
 import { queryKeys } from '@/api/queries'
 import { EnginePills, engineRunBody, useResolvedEngine, type EnginePick } from '@/components/engine-pills'
@@ -24,8 +24,9 @@ export type TrackerHandoffSelection = {
   engine: EnginePick
 }
 
-export function TrackerHandoff({ item, workflows, skills, selection, onSelectionChange, drafts, scopePending = false, detailUnavailable = false }: {
+export function TrackerHandoff({ item, association, workflows, skills, selection, onSelectionChange, drafts, scopePending = false, detailUnavailable = false }: {
   item: TrackerItem
+  association?: TrackerAssociation
   scopePending?: boolean
   detailUnavailable?: boolean
   drafts?: TrackerDraftCache
@@ -48,6 +49,10 @@ export function TrackerHandoff({ item, workflows, skills, selection, onSelection
   const snapshotIdentity = JSON.stringify([item.id, item.body, item.bodyTruncated, item.unsupportedContent])
   const acknowledgeLoss = acknowledgedSnapshot === snapshotIdentity
   const [queued, setQueued] = useState<string | null>(null)
+  const consentIdentity = JSON.stringify([item.id, item.url, association])
+  const [consentedIdentity, setConsentedIdentity] = useState<string | null>(null)
+  const canDelegate = association?.kind === 'linear' && !!association.connectionId
+  const linearWorkflow = canDelegate && consentedIdentity === consentIdentity ? association : undefined
   const resolved = useResolvedEngine(engine)
   const losses = trackerLosses(item)
   const emptyDescription = item.body.trim() === ''
@@ -55,21 +60,22 @@ export function TrackerHandoff({ item, workflows, skills, selection, onSelection
   const skillChainOverLimit = workflow === null && validSkills.length > MAX_CHAIN_STEPS
   const composition = useMemo(() => {
     try {
-      const task = trackerTaskPrompt(item, { skills: workflow ? validSkills : [], instruction, supplemental })
+      const task = trackerTaskPrompt(item, { skills: workflow ? validSkills : [], instruction, supplemental, linearWorkflow })
       return { task, error: null }
     } catch (error) {
       return { task: '', error: (error as Error).message }
     }
-  }, [item, workflow, validSkills.join('\0'), instruction, supplemental])
+  }, [item, workflow, validSkills.join('\0'), instruction, supplemental, linearWorkflow])
   const start = useMutation({
     mutationFn: () => createRun(trackerRunBody(
       item,
       workflow,
       validSkills,
       engineRunBody(resolved),
-      { instruction, supplemental, acknowledgeLoss },
+      { instruction, supplemental, acknowledgeLoss, linearWorkflow },
     )),
     onSuccess: (created) => {
+      setConsentedIdentity(null)
       const run = 'runs' in created ? created.runs[0] : created
       setQueued(run?.id ?? null)
       void queryClient.invalidateQueries({ queryKey: queryKeys.runs.all })
@@ -91,6 +97,14 @@ export function TrackerHandoff({ item, workflows, skills, selection, onSelection
       <h2 className="flex items-center gap-1.5 text-[11px] font-semibold tracking-[.04em] text-soft-foreground uppercase">
         <ZapIcon className="size-3.5 text-violet" /> Hand this to the agent
       </h2>
+      {canDelegate ? <div className="mt-3 rounded-md border border-border p-3 text-xs">
+        <label className="flex items-start gap-2">
+          <input type="checkbox" checked={!!linearWorkflow} disabled={scopePending || detailUnavailable || start.isPending} onChange={event => setConsentedIdentity(event.target.checked ? consentIdentity : null)} />
+          <span>Allow Linear workflow writeback for this run</span>
+        </label>
+        <p className="mt-2 text-muted-foreground">This delegates this project's Linear API key to every agent step and Continue session in this run. The agent can use the key's full permissions, not only this issue. Use a narrowly scoped key. Browsing and unchecked handoffs remain read-only.</p>
+        <p className="mt-2 text-muted-foreground">Agent-driven updates, not guaranteed sync: in-progress on start, then link the confirmed draft MR/PR and move to review. Never Done on task completion or auto-merge. Publication needs separate approval. After using the cockpit's draft button, Continue the same run with the published URL to finish writeback.</p>
+      </div> : null}
       <div className="mt-3 flex flex-wrap items-center gap-2">
         <WorkflowPicker workflows={workflows} value={workflow} onChange={setWorkflow} slotPrefix="tracker" />
         <SkillsPicker skills={skills} skillUsage={undefined} selected={validSkills} onToggle={toggleSkill} maxSelections={workflow === null ? MAX_CHAIN_STEPS : undefined} slotPrefix="tracker" />
