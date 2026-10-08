@@ -91,6 +91,7 @@ export type AppShellProps = {
    *  Defaults to shown so the presentational shell stays renderable alone; the container
    *  passes the health payload's truth. */
   forgeAvailable?: boolean
+  forgeKind?: import('@open-mercato/cezar-api-client').ForgeInfo['kind']
   /** Inbox gating (#471): `false` drops the Inbox nav item and its badge — the global inbox is
    *  opt-in via `CEZ_FOLLOWUPS=1`. Defaults to shown for the same reason as `forgeAvailable`. */
   inboxAvailable?: boolean
@@ -184,6 +185,7 @@ export const AppShell = React.memo(function AppShell({
   hostWidget,
   toolsMenu,
   forgeAvailable = true,
+  forgeKind,
   inboxAvailable = true,
   automationsAvailable = true,
   tracker,
@@ -199,7 +201,7 @@ export const AppShell = React.memo(function AppShell({
   const currentBase = activeNavItem(areaPathname)
   const current = currentBase?.to === '/tracker' && tracker
     ? { ...currentBase, label: TRACKER_PROVIDERS[tracker].label }
-    : currentBase
+    : currentBase?.forge && forgeKind === 'gitlab' ? { ...currentBase, label: 'GitLab' } : currentBase
   const [menuOpen, setMenuOpen] = React.useState(false)
   const closeMenu = React.useCallback(() => setMenuOpen(false), [])
   const mainRef = React.useRef<HTMLElement>(null)
@@ -249,8 +251,8 @@ export const AppShell = React.memo(function AppShell({
   }, [])
 
   const items = React.useMemo(
-    () => visibleNavItems({ forge: forgeAvailable, inbox: inboxAvailable, automations: automationsAvailable, tracker }),
-    [forgeAvailable, inboxAvailable, automationsAvailable, tracker],
+    () => visibleNavItems({ forge: forgeAvailable, forgeKind, inbox: inboxAvailable, automations: automationsAvailable, tracker }),
+    [forgeAvailable, forgeKind, inboxAvailable, automationsAvailable, tracker],
   )
 
   const nav = {

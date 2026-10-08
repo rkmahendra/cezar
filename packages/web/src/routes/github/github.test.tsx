@@ -283,6 +283,20 @@ function renderAt(entry: string) {
 }
 
 const rows = () => [...document.querySelectorAll<HTMLElement>('[data-slot="gh-row"]')]
+
+it('renders GitLab merge requests with truthful list caps and no GitHub detail operations', async () => {
+  const mr = { ...PR_137, url: 'https://git.example.com/group/sub/app/-/merge_requests/137' }
+  const sent = stubFetch({
+    'GET /api/v1/health': () => jsonResponse({ ...health(['claude']), forge: { kind: 'gitlab' } }),
+    'GET /api/v1/github?limit=1000': () => jsonResponse({ ...GITHUB, issues: [], prs: Array.from({ length: 100 }, (_, i) => ({ ...mr, number: i + 137, url: `https://git.example.com/group/sub/app/-/merge_requests/${i + 137}` })) }),
+  })
+  renderAt('/github/prs/137')
+  await screen.findByRole('heading', { name: 'GitLab' })
+  expect(screen.getByRole('link', { name: 'Merge requests · 100+' })).toBeTruthy()
+  expect(screen.getByRole('link', { name: /open on GitLab/ }).getAttribute('href')).toBe(mr.url)
+  expect(screen.getByText('Conversation, pipeline checks and merging are available on GitLab.')).toBeTruthy()
+  expect(sent.some(request => /\/github\/(comments|checks)|merge-state/.test(request.path))).toBe(false)
+})
 const detail = () => document.querySelector('[data-slot="gh-detail-inner"]')
 const promptField = () =>
   document.querySelector<HTMLTextAreaElement>('[data-slot="gh-custom-prompt"]')!

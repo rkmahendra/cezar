@@ -21,6 +21,9 @@ export const MAX_CHAIN_STEPS = 8
  * updating those regexes silently costs every run its PR/issue chip and its `#N` title prefix.
  */
 export function githubTaskRef(item: GithubItem): string {
+  if (/\/-\/(?:merge_requests|issues)\/\d+(?:[?#]|$)/.test(item.url)) {
+    return `${item.kind === 'pr' ? 'Address GitLab merge request' : 'Fix GitLab ticket'} [${item.number}]: ${item.title}\n\n${item.url}`
+  }
   return `${item.kind === 'pr' ? 'Address GitHub pull request' : 'Fix GitHub issue'} #${item.number}: ${item.title}\n\n${item.url}`
 }
 

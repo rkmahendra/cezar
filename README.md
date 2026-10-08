@@ -224,3 +224,7 @@ npm run dev
 ## Jira and Linear
 
 Connect a project issue tracker in Settings to browse issues, launch workflows and configure event automations. See [setup, permissions and recovery](docs/issue-trackers.md).
+
+GitHub, GitHub Enterprise Server, GitLab.com and self-managed GitLab CE/EE use the
+repository remote and host-specific `gh` / `glab` login. See [forge connections](docs/forge-connections.md)
+and [Linear to draft PR/MR workflow](docs/linear-forge-workflow.md). Nothing auto-merges.

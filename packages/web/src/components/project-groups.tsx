@@ -639,7 +639,8 @@ function ProjectGroup({
                 nothing about the other projects in the workspace. Whether `gh` itself works
                 still surfaces inside the tab as its availability hint. */}
             {visibleNavItems({
-              forge: project.forge === 'github',
+              forge: project.forge !== undefined,
+              forgeKind: project.forge,
               inbox: inboxAvailable,
               automations: automationsAvailable,
               tracker: project.tracker,

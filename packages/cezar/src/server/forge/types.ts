@@ -2,14 +2,14 @@ import type { RunRecord } from '../../runs/store.ts';
 
 /**
  * Forge-driver seam (cockpit-ui redesign spec §"Forge-driver seam"): every
- * code-forge integration (GitHub today, GitLab later) implements `ForgeDriver`.
+ * code-forge integration (GitHub and GitLab) implements `ForgeDriver`.
  * The interface is shaped strictly around what the cockpit already does via
  * `gh` — issue/PR listing for the GitHub tab, draft-PR creation for the review
  * gate, a per-branch PR probe, and web-URL building. Adding a forge = one new
  * driver file behind `resolveForge`, no route or UI changes.
  */
 
-export type ForgeKind = 'github';
+export type ForgeKind = 'github' | 'gitlab';
 
 /** Availability probe result — mirrors the tab's quiet degradation contract:
  *  no CLI, no remote, offline all land on `available:false` + a human hint. */

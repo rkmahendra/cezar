@@ -82,27 +82,28 @@ function pushAction(state: GitActionState): GitAction {
 }
 
 function createPrAction(state: GitActionState): GitAction {
+  const label = state.forge?.kind === 'gitlab' ? 'Create MR' : 'Create PR'
   const disabled = (reason: string): GitAction => ({
     id: 'create-pr',
-    label: 'Create PR',
+    label,
     enabled: false,
     reason,
   })
   if (!state.hasWorktree || state.branch === undefined) {
-    return disabled(`Create PR unavailable — ${NO_WORKTREE_REASON}`)
+    return disabled(`${label} unavailable: ${NO_WORKTREE_REASON}`)
   }
   if (state.forge === null) {
-    return disabled('Create PR unavailable — no supported forge remote (GitHub) detected')
+    return disabled('Create PR unavailable: no supported forge remote (GitHub or GitLab) detected')
   }
-  if (!state.forge.available) {
-    return disabled(`Create PR unavailable — ${state.forge.reason ?? 'the forge is unreachable'}`)
+  if (!state.forge.available && state.forge.kind !== 'gitlab') {
+    return disabled(`${label} unavailable: ${state.forge.reason ?? 'the forge is unreachable'}`)
   }
   // The server refuses `POST /pr` while the engine owns the run — mirror it honestly here
   // rather than letting the click discover the 409.
   if (isActive(state.status)) {
-    return disabled('Create PR unavailable — the run is still active; wait for the review gate')
+    return disabled(`${label} unavailable: the run is still active; wait for the review gate`)
   }
-  return { id: 'create-pr', label: 'Create PR', enabled: true }
+  return { id: 'create-pr', label, enabled: true }
 }
 
 /**
@@ -115,7 +116,7 @@ function createPrAction(state: GitActionState): GitAction {
  */
 export function gitActionPolicy(state: GitActionState): GitActionBar {
   const primary: GitAction = state.prUrl
-    ? { id: 'view-pr', label: 'View PR', enabled: true, href: state.prUrl }
+    ? { id: 'view-pr', label: state.forge?.kind === 'gitlab' ? 'View MR' : 'View PR', enabled: true, href: state.prUrl }
     : commitAction(state)
 
   const secondary: GitAction[] = state.prUrl

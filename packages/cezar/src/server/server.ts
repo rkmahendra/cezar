@@ -207,7 +207,8 @@ import { isLoopbackHostHeader, normalizeHostname, resolveCapabilities } from './
 import { createSocketHub, type SocketHub, type WsUpgradeVerdict } from './ws.ts';
 import { browseDirectory, isInsideBrowseRoot, isLexicallyInsideBrowseRoot, resolveBrowseRoot } from './fs-browse.ts';
 import { parseRemote, resolveForge, type ForgeAvailability } from './forge/index.ts';
-import { fetchGithub, fetchGithubChecks, fetchGithubComments, fetchGithubPrDiff, fetchGithubRefStatus, forgetRefStatus, readCachedRefStatuses, refNumberFromUrl, searchGithubItems, GithubPrNotFoundError, GH_CHECKS_MAX, GH_SEARCH_MAX, GH_REF_STATUS_MAX } from './github.ts';
+import { forgetRefStatus, readCachedRefStatuses, refNumberFromUrl, GithubPrNotFoundError, GH_CHECKS_MAX, GH_SEARCH_MAX, GH_REF_STATUS_MAX } from './github.ts';
+import { fetchForge, fetchForgeChecks, fetchForgeComments, fetchForgePrDiff, fetchForgeRefStatus, searchForge } from './forge-api.ts';
 import { ensureLaunchKey } from './launch-key.ts';
 import { openInTerminal } from './open-in-terminal.ts';
 import {
@@ -217,7 +218,6 @@ import {
   openInApp,
   withResolvedClaudeBin,
 } from './open-in-app.ts';
-import { createDraftPr } from './pr.ts';
 import { ProviderRuntimeAuthObserver } from './provider-auth-runtime.ts';
 import {
   providerForActiveRun,
@@ -3609,7 +3609,7 @@ export function createApp(deps: ServerDeps) {
       // A cold cache (first read after boot) waits for the probe instead of answering "still being
       // checked": nothing re-reads this page when the background probe lands, so that answer
       // would lock the editor's GitHub trigger off. Only `/api/health` has a latency budget.
-      const availability: ForgeAvailability = forge
+      const availability: ForgeAvailability = forge?.kind === 'github'
         ? forge.detectCached() ?? (await forge.detect())
         : { available: false, reason: 'No GitHub remote is configured' };
       const definitions = automationStore.list();
@@ -4799,7 +4799,9 @@ export function createApp(deps: ServerDeps) {
           400,
         );
       }
-      const outcome = await createDraftPr({
+      const forge = resolveForge(await getRepoInfo(repoRoot));
+      if (!forge) return c.json({ error: 'No supported forge remote detected' }, 409);
+      const outcome = await forge.createPR({
         repoRoot,
         run,
         handoffText: readHandoff(dataDir, id),
@@ -4819,7 +4821,7 @@ export function createApp(deps: ServerDeps) {
       });
       store.appendEvent(id, {
         type: 'note',
-        message: `draft PR created: ${outcome.url}${outcome.dryRun ? ' (dry run — no real PR)' : ''}`,
+        message: `draft ${forge.kind === 'gitlab' ? 'MR' : 'PR'} created: ${outcome.url}${outcome.dryRun ? ' (dry run, nothing published)' : ''}`,
       });
       return c.json({ url: outcome.url, dryRun: outcome.dryRun }, 201);
     })
@@ -5685,7 +5687,7 @@ export function createApp(deps: ServerDeps) {
         const { root: repoRoot } = c.get('project');
         const query = c.req.valid('query');
         const limit = Number.parseInt(query.limit ?? '', 10);
-        return c.json(await fetchGithub(repoRoot, query.refresh === '1', Number.isFinite(limit) ? limit : 30));
+        return c.json(await fetchForge(repoRoot, query.refresh === '1', Number.isFinite(limit) ? limit : 30));
       },
     )
 
@@ -5697,7 +5699,7 @@ export function createApp(deps: ServerDeps) {
       });
       if (!parsed.success) return c.json({ error: 'invalid kind or number' }, 400);
       return c.json(
-        await fetchGithubComments(repoRoot, parsed.data.kind, parsed.data.number, c.req.valid('query').refresh === '1'),
+        await fetchForgeComments(repoRoot, parsed.data.kind, parsed.data.number, c.req.valid('query').refresh === '1'),
       );
     })
 
@@ -5719,7 +5721,7 @@ export function createApp(deps: ServerDeps) {
         if (!Number.isInteger(n) || n <= 0 || String(n) !== part) return c.json({ error: 'invalid prs query' }, 400);
         numbers.push(n);
       }
-      return c.json(await fetchGithubChecks(repoRoot, numbers));
+      return c.json(await fetchForgeChecks(repoRoot, numbers));
     })
 
     // Search across ALL states (#730). Additive sibling of `/github`, which lists the OPEN set
@@ -5740,7 +5742,7 @@ export function createApp(deps: ServerDeps) {
       async (c) => {
         const { root: repoRoot } = c.get('project');
         const { kind, q, limit } = c.req.valid('query');
-        return c.json(await searchGithubItems(repoRoot, kind, q, limit));
+        return c.json(await searchForge(repoRoot, kind, q, limit));
       },
     )
 
@@ -5761,7 +5763,7 @@ export function createApp(deps: ServerDeps) {
         if (parsedPrs.length === 0 && parsedIssues.length === 0) {
           return c.json({ error: 'missing prs or issues query' }, 400);
         }
-        return c.json(await fetchGithubRefStatus(repoRoot, { prs: parsedPrs, issues: parsedIssues }));
+        return c.json(await fetchForgeRefStatus(repoRoot, { prs: parsedPrs, issues: parsedIssues }));
       },
     )
 
@@ -5773,7 +5775,7 @@ export function createApp(deps: ServerDeps) {
         const { root: repoRoot } = c.get('project');
         const parsed = { data: c.req.valid('param') };
         const forge = resolveForge(await getRepoInfo(repoRoot));
-        if (!forge?.prMergeState) return c.json({ available: false, reason: 'GitHub merge state is unavailable' });
+        if (!forge?.prMergeState) return c.json({ available: false, reason: 'Merge state is unavailable. Review and merge on the forge.' });
         return c.json(await forge.prMergeState(parsed.data.number, { refresh: c.req.valid('query').refresh === '1' }));
       },
     )
@@ -5787,7 +5789,7 @@ export function createApp(deps: ServerDeps) {
         const parsedNumber = { data: c.req.valid('param') };
         const body = { data: c.req.valid('json') };
         const forge = resolveForge(await getRepoInfo(repoRoot));
-        if (!forge?.mergePR) return c.json({ error: 'GitHub merge is unavailable' }, 409);
+        if (!forge?.mergePR) return c.json({ error: 'Merge is unavailable. Review and merge on the forge.' }, 409);
         const result = await forge.mergePR(parsedNumber.data.number, body.data);
         if (result.merged) {
           // We just changed this pull request, so what the ref-status cache holds about it is now
@@ -5821,7 +5823,7 @@ export function createApp(deps: ServerDeps) {
         const parsed = { data: c.req.valid('param') };
         try {
           return c.json(
-            await fetchGithubPrDiff(repoRoot, parsed.data.number, c.req.valid('query').refresh === '1'),
+            await fetchForgePrDiff(repoRoot, parsed.data.number, c.req.valid('query').refresh === '1'),
           );
         } catch (err) {
           if (err instanceof GithubPrNotFoundError) return c.json({ error: err.message }, 404);

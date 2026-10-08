@@ -35,7 +35,7 @@ export const projectListEntrySchema = z.object({
   branch: z.string().optional(),
   /** Which forge this project's remote belongs to (#698) — classified server-side from the
    *  remote URL alone. Gates the project group's GitHub nav item; omitted = no forge remote. */
-  forge: z.literal('github').optional(),
+  forge: z.enum(['github', 'gitlab']).optional(),
   /**
    * The remote's web root, `https://github.com/owner/repo`. Rebuilt server-side from the parsed
    * remote rather than passed through, so a remote carrying credentials cannot leak into the

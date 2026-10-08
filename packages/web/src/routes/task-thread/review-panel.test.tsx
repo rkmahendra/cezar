@@ -341,7 +341,7 @@ describe('the review gate on the thread', () => {
     fireEvent.click(screen.getByRole('button', { name: /Draft PR/ }))
     await waitFor(() => {
       expect(document.querySelector('[data-slot="toast"]')?.textContent).toBe(
-        'Draft PR created — https://github.com/x/y/pull/7',
+        'Draft PR created: https://github.com/x/y/pull/7',
       )
     })
     expect(sent.filter((r) => r.method === 'POST' && r.path === '/api/v1/runs/r1/pr')).toHaveLength(1)

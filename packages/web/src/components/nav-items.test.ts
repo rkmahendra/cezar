@@ -2,6 +2,11 @@ import { describe, expect, it } from 'vitest'
 
 import { NAV_ITEMS, activeNavItem, activeNavPath, visibleNavItems } from './nav-items'
 
+it('labels the existing forge route GitLab without changing GitHub navigation', () => {
+  expect(visibleNavItems({ forge: true, forgeKind: 'gitlab' }).find(item => item.forge)).toMatchObject({ to: '/github', label: 'GitLab' })
+  expect(visibleNavItems({ forge: true }).find(item => item.forge)?.label).toBe('GitHub')
+})
+
 /** Which nav item owns a URL. This is the rule that decides what the user sees lit up, and it
  *  is not a plain equality check — items own areas, and the Settings area nests. */
 describe('activeNavPath', () => {

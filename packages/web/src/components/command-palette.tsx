@@ -453,7 +453,8 @@ function PaletteContent({ close }: { close: () => void }) {
             </CommandItem>
           ) : null}
           {visibleNavItems({
-            forge: health.data?.forge?.available === true,
+            forge: health.data?.forge?.available === true || health.data?.forge?.kind === 'gitlab',
+            forgeKind: health.data?.forge?.kind,
             inbox: health.data?.capabilities.followups === true,
             automations: health.data?.capabilities.automations === true,
             tracker: registry?.projects.find((project) => project.id === (activeProjectId ?? registry.bootProject))?.tracker,

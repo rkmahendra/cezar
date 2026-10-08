@@ -249,8 +249,8 @@ describe('forgeNote', () => {
   })
 
   it('a null forge explains the hidden tab as a missing GitHub remote', () => {
-    expect(forgeNote(HEALTH)).toContain('No GitHub remote detected')
-    expect(forgeNote(HEALTH)).toContain('GitHub tab is hidden')
+    expect(forgeNote(HEALTH)).toContain('No supported forge remote detected')
+    expect(forgeNote(HEALTH)).toContain('forge tab is hidden')
   })
 
   it('an unavailable driver carries the server reason verbatim', () => {
@@ -265,7 +265,7 @@ describe('forgeNote', () => {
   it('renders in the open menu when the forge is absent, and not when it works', async () => {
     const { unmount } = renderMenu(HEALTH)
     let menu = await openMenu()
-    expect(within(menu).getByText(/No GitHub remote detected/)).toBeTruthy()
+    expect(within(menu).getByText(/No supported forge remote detected/)).toBeTruthy()
     unmount()
 
     renderMenu({ ...HEALTH, forge: { kind: 'github', available: true } })

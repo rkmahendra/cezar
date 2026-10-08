@@ -175,7 +175,8 @@ export const AppShellContainer = memo(function AppShellContainer({ children }: {
         // Hidden until health confirms the forge driver (R6 Step 1.1) — same honesty rule as
         // the chips: the nav must not claim a GitHub tab it cannot back. The Tools menu's
         // forge note says why it is absent.
-        forgeAvailable={health.data?.forge?.available === true}
+        forgeAvailable={health.data?.forge?.available === true || health.data?.forge?.kind === 'gitlab'}
+        forgeKind={activeProject?.forge ?? (isBootProject ? health.data?.forge?.kind : undefined)}
         // Hidden unless health reports the opt-in inbox (#471) — same honesty rule as above:
         // the nav must not offer an Inbox this server will never fill.
         inboxAvailable={inboxAvailable}

@@ -23,7 +23,7 @@ import { useParams } from 'react-router'
 import { Link, Navigate } from '@/lib/project-router'
 
 import { getGithub, getGithubComments, getGithubPrChanges, getGithubPrMergeState, mergeGithubPr, putUiState } from '@/api/client'
-import { queryKeys, useGithub, useGithubChecks, useGithubComments, useGithubPrChanges, useGithubSearch, useHealth, useSkills, useUiState, useWorkflows } from '@/api/queries'
+import { queryKeys, useGithub, useGithubChecks, useGithubComments, useGithubPrChanges, useGithubSearch, useHealth, useProjectForge, useSkills, useUiState, useWorkflows } from '@/api/queries'
 import type {
   GithubComment,
   GithubItem,
@@ -149,6 +149,9 @@ export function GithubRoute({
   index?: boolean
 }) {
   const { n } = useParams()
+  const isGitlab = useProjectForge()?.kind === 'gitlab'
+  const forgeLabel = isGitlab ? 'GitLab' : 'GitHub'
+  const requestLabel = isGitlab ? 'merge requests' : 'pull requests'
   // One fast shot now that the list dropped `statusCheckRollup` (#664) — no more fast/full swap.
   const list = useGithub({ limit: LIST_LIMIT })
   // #801: automations are opt-in, so the cross-link into them exists exactly while the server
@@ -186,7 +189,7 @@ export function GithubRoute({
     }
     return [...nums]
   }, [gh, sortedPrs, view, selectedNumber])
-  const checksQuery = useGithubChecks(checkPrNumbers, view === 'prs')
+  const checksQuery = useGithubChecks(checkPrNumbers, view === 'prs' && !isGitlab)
   const checksMap = checksQuery.data?.available ? checksQuery.data.checks : undefined
 
   const queryClient = useQueryClient()
@@ -361,7 +364,7 @@ export function GithubRoute({
           <CenteredState
             icon={<TriangleAlertIcon />}
             tone="danger"
-            title="Could not load GitHub"
+            title={`Could not load ${forgeLabel}`}
             subtitle={list.error.message}
           />
         </div>
@@ -379,7 +382,7 @@ export function GithubRoute({
         <CenteredState
           icon={<GithubIcon />}
           tone="neutral"
-          title="GitHub is unavailable here"
+          title={`${forgeLabel} is unavailable here`}
           subtitle={gh.reason ?? 'unknown reason'}
           actions={
             <Button
@@ -393,8 +396,8 @@ export function GithubRoute({
           }
         >
           <p className="text-xs leading-relaxed text-soft-foreground">
-            The tab needs the <span className="font-mono">gh</span> CLI, logged in (
-            <span className="font-mono">gh auth login</span>), and a repo with a GitHub remote.
+            The tab needs the <span className="font-mono">{isGitlab ? 'glab' : 'gh'}</span> CLI, logged in (
+            <span className="font-mono">{isGitlab ? 'glab' : 'gh'} auth login --hostname HOST</span>), and a repo with a {forgeLabel} remote.
             Everything else in cezar works without it.
           </p>
         </CenteredState>
@@ -471,15 +474,15 @@ export function GithubRoute({
   // that heading. The search-hits case stays below `searching` in the chain on purpose — while a
   // new query is in flight over stale hits, the spinner is the honest thing to show.
   const emptyState = !filtering ? (
-    <p>No open {view === 'issues' ? 'issues' : 'pull requests'}.</p>
+    <p>No open {view === 'issues' ? 'issues' : requestLabel}.</p>
   ) : searching ? (
     <p className="flex items-center gap-1.5">
       <LoaderCircleIcon aria-hidden="true" className="size-3.5 motion-safe:animate-spin" />
-      Searching GitHub for “{query.trim()}”…
+      Searching {forgeLabel} for “{query.trim()}”…
     </p>
   ) : searchHits.length > 0 ? null : searchFailed ? (
     <p>
-      No open {view === 'issues' ? 'issues' : 'pull requests'} match your filter, and GitHub could
+      No open {view === 'issues' ? 'issues' : requestLabel} match your filter, and {forgeLabel} could
       not be searched: {searchFailureReason}.
     </p>
   ) : searchPayload ? (
@@ -488,18 +491,18 @@ export function GithubRoute({
     // requires a non-empty query), so claiming "closed or merged" there would be the same
     // unfounded certainty in a different costume.
     <p>
-      No {view === 'issues' ? 'issues' : 'pull requests'} match your filter — open, closed or
+      No {view === 'issues' ? 'issues' : requestLabel} match your filter: open, closed or
       merged.
     </p>
   ) : (
-    <p>No open {view === 'issues' ? 'issues' : 'pull requests'} match your filter.</p>
+    <p>No open {view === 'issues' ? 'issues' : requestLabel} match your filter.</p>
   )
 
   return (
     <IssueBrowserLayout name="gh" route="github" selected={n !== undefined} list={<>
         <header data-slot="gh-header" className="sticky top-0 z-10 border-b border-border bg-background/95 px-4 pt-3 backdrop-blur">
           <div className="flex min-w-0 items-center gap-2.5">
-            <h1 className="text-lg font-semibold">GitHub</h1>
+            <h1 className="text-lg font-semibold">{forgeLabel}</h1>
             {gh.repo ? (
               <span data-slot="gh-repo" className="min-w-0 truncate font-mono text-[11px] text-soft-foreground">
                 {gh.repo}
@@ -516,7 +519,7 @@ export function GithubRoute({
             <button
               type="button"
               data-slot="gh-refresh"
-              title="Refresh from GitHub"
+              title={`Refresh from ${forgeLabel}`}
               disabled={refresh.isPending}
               onClick={() => refresh.mutate()}
               // The automations link owns the `ml-auto` that pushes this cluster right; with the
@@ -535,10 +538,10 @@ export function GithubRoute({
           </div>
           <div data-slot="gh-tabs" className="mt-2.5 flex items-end gap-1">
             <TabLink to="/github" active={view === 'issues'} onClick={() => saveGithubView('issues')}>
-              Issues · {countLabel(gh.issues.length)}
+              Issues · {countLabel(gh.issues.length, isGitlab ? 100 : LIST_LIMIT)}
             </TabLink>
             <TabLink to="/github/prs" active={view === 'prs'} onClick={() => saveGithubView('prs')}>
-              Pull requests · {countLabel(gh.prs.length)}
+              {isGitlab ? 'Merge requests' : 'Pull requests'} · {countLabel(gh.prs.length, isGitlab ? 100 : LIST_LIMIT)}
             </TabLink>
           </div>
           {/* Wraps rather than squeezes: on a phone the sort control below is ~145px, and with
@@ -615,7 +618,7 @@ export function GithubRoute({
         {searchHits.length > 0 ? (
           <div data-slot="gh-search-hits">
             <p className="px-4 pt-2 pb-1 text-[11px] font-medium tracking-wide text-soft-foreground uppercase">
-              Found on GitHub{searchPayload?.truncated ? ' (first matches)' : ''}
+              Found on {forgeLabel}{searchPayload?.truncated ? ' (first matches)' : ''}
             </p>
             <ul className="flex flex-col gap-0.5 px-2 pb-2">
               {searchHits.map((item) => (
@@ -668,7 +671,7 @@ export function GithubRoute({
                 : // Since #730 a closed or merged item IS reachable — type its number into the
                   // search box and the tab asks GitHub directly — so the honest advice is to
                   // search, not the old "it may be closed" shrug.
-                  `#${number} is not among the open ${view === 'issues' ? 'issues' : 'pull requests'}. Search for ${number} above to look it up on GitHub, closed and merged included.`
+                  `#${number} is not among the open ${view === 'issues' ? 'issues' : requestLabel}. Search for ${number} above to look it up on ${forgeLabel}, closed and merged included.`
             }
           />
         )}
@@ -678,8 +681,8 @@ export function GithubRoute({
 
 /** The exact open count from the single fast fetch — with a `+` only when it hit the list cap, so
  *  a repo with more than `LIST_LIMIT` open items reads honestly as "at least this many". */
-function countLabel(count: number): string {
-  return `${count}${count >= LIST_LIMIT ? '+' : ''}`
+function countLabel(count: number, limit = LIST_LIMIT): string {
+  return `${count}${count >= limit ? '+' : ''}`
 }
 
 function GithubRow({
@@ -704,6 +707,7 @@ function GithubRow({
   // Warm the thread on hover/focus (#664) so opening the row is usually instant — best-effort,
   // deduped by React Query, and it re-uses the mounted detail's exact query key/staleTime.
   const prefetchThread = () => {
+    if (item.url.includes('/-/')) return
     void queryClient.prefetchQuery({
       queryKey: queryKeys.githubComments(item.kind, item.number),
       queryFn: ({ signal }) => getGithubComments(item.kind, item.number, {}, { signal }),
@@ -865,7 +869,9 @@ function GithubDetail({
   /** Resolved checks glyph — the lazily-hydrated value overrides the list's `null` (#664). */
   checks?: GithubItem['checks']
 }) {
-  const kindWord = item.kind === 'pr' ? 'pull request' : 'issue'
+  const isGitlab = item.url.includes('/-/')
+  const forgeLabel = isGitlab ? 'GitLab' : 'GitHub'
+  const kindWord = item.kind === 'pr' ? (isGitlab ? 'merge request' : 'pull request') : 'issue'
   const hasDiffStat = item.kind === 'pr' && Boolean(item.additions || item.deletions)
   return (
     <article data-slot="gh-detail-inner" className="min-w-0 px-4 py-4 md:px-7 md:py-5">
@@ -905,12 +911,12 @@ function GithubDetail({
             data-slot="gh-open-link"
             className="inline-flex items-center gap-0.5 text-muted-foreground hover:text-foreground hover:underline"
           >
-            open on GitHub
+            open on {forgeLabel}
             <ExternalLinkIcon aria-hidden="true" className="size-2.5" />
           </a>
         ) : (
           <span data-slot="gh-open-link" className="text-muted-foreground">
-            open on GitHub
+            open on {forgeLabel}
           </span>
         )}
       </p>
@@ -918,7 +924,7 @@ function GithubDetail({
       <h2 className="mt-2 text-xl leading-snug font-semibold">{item.title}</h2>
 
       {item.kind === 'pr' ? (
-        <nav aria-label="Pull request detail" className="mt-4 flex border-b border-border">
+        <nav aria-label={isGitlab ? 'Merge request detail' : 'Pull request detail'} className="mt-4 flex border-b border-border">
           <TabLink to={`/github/prs/${item.number}`} active={!changes}>Conversation</TabLink>
           <TabLink to={`/github/prs/${item.number}/changes`} active={changes}>Changes</TabLink>
         </nav>
@@ -933,7 +939,7 @@ function GithubDetail({
         </div>
       ) : null}
 
-      {changes && item.kind === 'pr' ? <GithubPrChanges item={item} /> : <>
+      {changes && item.kind === 'pr' ? (isGitlab ? <p className="mt-4 text-sm">Open this merge request on GitLab to inspect changed files.</p> : <GithubPrChanges item={item} />) : <>
       <div data-slot="gh-body" className="mt-5 text-sm">
         {item.body ? (
           <Markdown>{item.body}</Markdown>
@@ -942,9 +948,9 @@ function GithubDetail({
         )}
       </div>
 
-      <GithubThread item={item} colors={colors} />
+      {isGitlab ? <p className="mt-4 text-xs text-muted-foreground">Conversation, pipeline checks and merging are available on GitLab.</p> : <GithubThread item={item} colors={colors} />}
 
-      {item.kind === 'pr' ? <GithubMergeBox number={item.number} /> : null}
+      {item.kind === 'pr' && !isGitlab ? <GithubMergeBox number={item.number} /> : null}
 
       {children}
       </>}

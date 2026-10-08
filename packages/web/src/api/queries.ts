@@ -907,9 +907,19 @@ export function useProjectRepoBase(): string | undefined {
   const { projectId } = useProjectScope()
   const scopedId = projectId ?? health?.bootProject
   const registered = scopedId === undefined ? undefined : projects?.find((project) => project.id === scopedId)
-  if (registered?.repoUrl) return registered.repoUrl
+  if (registered?.repoUrl) return registered.forge === 'gitlab' ? undefined : registered.repoUrl
   const isBootProject = projectId === null || projectId === health?.bootProject
   return isBootProject ? githubRepoBase(health?.repo?.remote) : undefined
+}
+
+/** Health describes only the boot repo. Other projects use their own forge inventory. */
+export function useProjectForge(): import('@open-mercato/cezar-api-client').ForgeInfo | null {
+  const health = useHealth().data
+  const { projectId } = useProjectScope()
+  const projects = useProjects().data
+  if (projectId === null || projectId === 'default' || projectId === health?.bootProject) return health?.forge ?? null
+  const kind = projects?.projects.find(project => project.id === projectId)?.forge
+  return kind ? { kind, available: true } : null
 }
 
 /** The local "Open in…" targets (#open-in). Machine-level and stable, so it caches broadly;

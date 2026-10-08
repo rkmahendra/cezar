@@ -71,10 +71,11 @@ export function toolsTooltip(health: HealthResponse): string {
  */
 export function forgeNote(health: HealthResponse): string | null {
   if (health.forge?.available) return null
+  if (health.forge?.kind === 'gitlab') return health.forge.reason ?? 'GitLab availability is checked when you open its tab or publish an MR.'
   if (!health.forge) {
-    return 'No GitHub remote detected — the GitHub tab is hidden. Every plain-git feature still works.'
+    return 'No supported forge remote detected. The forge tab is hidden. Every plain-git feature still works.'
   }
-  return `GitHub is unreachable — ${health.forge.reason ?? 'unknown reason'}. The GitHub tab is hidden until it comes back.`
+  return `GitHub is unreachable: ${health.forge.reason ?? 'unknown reason'}. The GitHub tab is hidden until it comes back.`
 }
 
 export function ToolsMenu({ health }: { health: HealthResponse | undefined }) {

@@ -10,7 +10,7 @@ import {
 import { useEffect, useRef, useState } from 'react'
 
 import { ApiError, continueRun, createRunPr } from '@/api/client'
-import { queryKeys } from '@/api/queries'
+import { queryKeys, useProjectForge } from '@/api/queries'
 import type { ApiRun, RunStatus } from '@open-mercato/cezar-api-client'
 import { TwinkleBackdrop } from '@/components/centered-state'
 import { RunDiff } from '@/components/run-diff'
@@ -51,7 +51,7 @@ export function ReviewPanel({ run, diffComments }: { run: ApiRun; diffComments?:
         <p className="min-w-0 text-[13px]">
           <span className="font-semibold">Review the changes before anything lands.</span>{' '}
           <span className="text-muted-foreground">
-            Read the diff, send notes back, draft a PR — or accept. Nothing merges on its own.
+            Read the diff, send notes back, draft a PR/MR or accept. Nothing merges on its own.
           </span>
         </p>
       </div>
@@ -65,6 +65,7 @@ export function ReviewPanel({ run, diffComments }: { run: ApiRun; diffComments?:
 // ---- notes + exits --------------------------------------------------------------------------
 
 function ReviewActions({ run, diffComments }: { run: ApiRun; diffComments?: DiffComments }) {
+  const requestName = useProjectForge()?.kind === 'gitlab' ? 'MR' : 'PR'
   const queryClient = useQueryClient()
   const notesRef = useRef<HTMLTextAreaElement>(null)
   // Review notes are the second-longest thing anyone types into a task, and they are typed while
@@ -108,7 +109,7 @@ function ReviewActions({ run, diffComments }: { run: ApiRun; diffComments?: Diff
   const draftPr = useMutation({
     mutationFn: () => createRunPr(run.id),
     onSuccess: (result) => {
-      toast(`Draft PR created — ${result.url}`)
+      toast(`Draft ${requestName} created: ${result.url}`)
       invalidate() // the run completed as done with `pullRequestUrl` — refetch shows PR ↗
     },
     onError: (error: Error) => {
@@ -205,10 +206,10 @@ function ReviewActions({ run, diffComments }: { run: ApiRun; diffComments?: Diff
               href={run.pullRequestUrl}
               target="_blank"
               rel="noopener noreferrer"
-              title="The PR for this task is already open"
+              title={`The ${requestName} for this task is already open`}
             >
               <ExternalLinkIcon aria-hidden="true" />
-              PR ↗
+              {requestName} ↗
             </a>
           </Button>
         ) : (
@@ -216,12 +217,12 @@ function ReviewActions({ run, diffComments }: { run: ApiRun; diffComments?: Diff
             data-slot="review-draft-pr"
             variant="outline"
             size="sm"
-            title="Push the branch and open a draft PR"
+            title={`Push the branch and open a draft ${requestName}`}
             disabled={draftPr.isPending}
             onClick={() => draftPr.mutate()}
           >
             <GitPullRequestIcon aria-hidden="true" />
-            Draft PR
+            Draft {requestName}
           </Button>
         )}
         <Button

@@ -31,6 +31,12 @@ const find = (state: GitActionState, id: string) => {
 }
 
 describe('gitActionPolicy — slots', () => {
+  it('names GitLab publication MR and keeps the review gate', () => {
+    const forge = { kind: 'gitlab' as const, available: true }
+    expect(find(withState({ forge }), 'create-pr')).toMatchObject({ label: 'Create MR', enabled: true })
+    expect(find(withState({ forge, status: 'running' }), 'create-pr')).toMatchObject({ enabled: false })
+    expect(gitActionPolicy(withState({ forge, prUrl: 'https://git.example.com/team/app/-/merge_requests/7' })).primary.label).toBe('View MR')
+  })
   it('without a PR: Commit is primary, Push + Create PR secondary, terminal in the menu', () => {
     const bar = gitActionPolicy(base)
     expect(bar.primary).toEqual({ id: 'commit', label: 'Commit', enabled: true })

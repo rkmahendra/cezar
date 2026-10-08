@@ -27,6 +27,15 @@ Breaking: renaming/removing a command, flag, alias or env var; changing a defaul
 
 ## 2. HTTP API of the cockpit server (`packages/cezar/src/server/server.ts`)
 
+Forge extension (2026-10-08): health `forge.kind` and project `forge` also accept `gitlab`.
+Existing `/api/v1/github` and scoped aliases retain their wire shapes and route names,
+but list/search dispatch to the selected GitHub or GitLab driver. GitLab MRs use the
+shared `kind: 'pr'` value with vendor-correct URLs. Unsupported GitLab details answer
+unavailable, never GitHub fallback data. `POST /api/v1/runs/:id/pr` also publishes draft
+GitLab MRs, preserving `{url, dryRun}`, review gating and no-auto-merge semantics.
+Custom hosts are discovered from local host-specific CLI configuration, not network
+probes. GitHub-only event automations remain GitHub-only.
+
 **Every route lives under `/api/v1`.** The unversioned `/api/*` surface was REMOVED (see the breaking entry in CHANGELOG.md): the paths below are the real URLs; the project-scoped ones also answer at `/api/v1/p/<projectId>/<path>`. A future `v2` mounts beside `v1` rather than editing these paths.
 
 Consumed by the bundled React cockpit (`packages/cezar/web/dist`, shipped in lockstep — low risk) and by anyone scripting `localhost:4321`. Saved bookmarklets do NOT call the API — since GitHub's CSP blocked cross-origin probes they only open a page URL (`packages/web/src/lib/bookmarklet.ts`), which is why removing the unversioned surface did not break them.

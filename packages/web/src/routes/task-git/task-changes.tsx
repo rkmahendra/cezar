@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps 
 import { useParams, useSearchParams } from 'react-router'
 
 import { ApiError, createRunPr, getRunFile, openRunFileInApp, openRunInCli, pushRun, runFileRawUrl } from '@/api/client'
-import { queryKeys, useHealth, useRepo, useRun, useRunChanges } from '@/api/queries'
+import { queryKeys, useHealth, useProjectForge, useRepo, useRun, useRunChanges } from '@/api/queries'
 import type { ApiRun } from '@open-mercato/cezar-api-client'
 import { CenteredState } from '@/components/centered-state'
 import { Diff, type DiffHandle, type DiffMode, type DiffRevealTarget } from '@/components/diff'
@@ -47,6 +47,7 @@ export function TaskChangesRoute() {
 
 function ChangesView({ run }: { run: ApiRun }) {
   const health = useHealth()
+  const forge = useProjectForge()
   // The remote that decides whether Push is offered comes from the PROJECT-scoped `/repo`, not
   // from `/api/health.repo`: health is bound to the boot folder, so a cezar booted outside a git
   // repo reported no remote for every project (#791).
@@ -114,7 +115,7 @@ function ChangesView({ run }: { run: ApiRun }) {
   const createPr = useMutation({
     mutationFn: () => createRunPr(run.id),
     onSuccess: (result) => {
-      toast(`Draft PR created — ${result.url}`)
+      toast(`Draft ${result.url.includes('/-/merge_requests/') ? 'MR' : 'PR'} created: ${result.url}`)
       void invalidateRuns() // the record now carries pullRequestUrl → the policy flips to View PR
     },
     onError,
@@ -150,7 +151,7 @@ function ChangesView({ run }: { run: ApiRun }) {
     branch: run.branch,
     changedFiles: changes.data?.stat.files,
     remote: repo.data?.info?.remote,
-    forge: health.data?.forge ?? null,
+    forge,
     localHandoff: health.data?.capabilities.localHandoff ?? false,
     hasSession: lastSessionId(run) !== undefined,
     prUrl: run.pullRequestUrl,

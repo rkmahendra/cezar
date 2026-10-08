@@ -31,6 +31,12 @@ function item(overrides: Partial<GithubItem> = {}): GithubItem {
 }
 
 describe('githubTaskPrompt', () => {
+  it('keeps GitLab identity without manufacturing a GitHub numeric reference', () => {
+    const task = githubTaskPrompt(item({ kind: 'pr', url: 'https://git.example.com/group/sub/demo/-/merge_requests/142' }))
+    expect(task).toContain('Address GitLab merge request [142]')
+    expect(task).not.toContain('GitHub')
+    expect(extractTaskRefs(task).prNumber).toBeUndefined()
+  })
   it('an issue reads "Fix GitHub issue", carries the URL, and quotes the body below a rule', () => {
     expect(githubTaskPrompt(item())).toBe(
       'Fix GitHub issue #142: Login form drops session on refresh\n\n' +
