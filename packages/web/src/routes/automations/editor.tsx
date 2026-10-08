@@ -253,7 +253,7 @@ export function AutomationEditor({ data, automation, actions, onBack, onSaved, o
                     <input type="checkbox" checked={draft.linearWorkflow} onChange={event => patch({ linearWorkflow: event.target.checked })} />
                     <span>Allow Linear workflow updates</span>
                   </label>
-                  <p className="text-xs text-muted-foreground">Move each matched issue to its team's unique in-progress state before agent work and link the verified PR/MR after you publish. Ambiguous states block work. The agent also receives this connection's full Linear API permissions. Existing started states stay unchanged. No automatic Done status, push or merge.</p>
+                  <p className="text-xs text-muted-foreground">Move each matched issue to its team's unique started state named In Progress, or its only started state, before agent work and link the verified PR/MR after you publish. Ambiguous states block work. The agent also receives this connection's full Linear API permissions. Existing started states stay unchanged. No automatic Done status, push or merge.</p>
                 </div>
               ) : null}
               <div data-slot="editor-prompt-templates" className="flex flex-wrap items-center gap-1.5 text-xs text-soft-foreground">

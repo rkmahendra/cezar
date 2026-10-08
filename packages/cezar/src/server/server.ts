@@ -5,6 +5,8 @@ import {
   trackerWorkflowInputSchema, trackerWorkflowSchema, type TrackerWorkflow,
 } from '@open-mercato/cezar-contract';
 import { createTrackerService } from './tracker/index.ts';
+import { attachTrackerWorkflowPublication, TrackerWorkflowError } from './tracker/linear-workflow.ts';
+import { TrackerAgentBindingError } from './tracker/agent-credentials.ts';
 import { TrackerWatches } from './tracker/watch.ts';
 import { readTrackerAssociation, writeTrackerAssociation, clearTrackerAssociation } from '../tracker-association.ts';
 import { existsSync, readFileSync, statSync } from 'node:fs';
@@ -4870,6 +4872,18 @@ export function createApp(deps: ServerDeps) {
         type: 'note',
         message: `${forge.kind === 'gitlab' ? 'MR' : 'PR'} publication confirmed: ${outcome.url}${outcome.dryRun ? ' (dry run, nothing published)' : ''}`,
       });
+      if (run.trackerWorkflow && !outcome.dryRun) {
+        let message: string;
+        try {
+          // Trust the verified forge outcome, never transcript-derived run URL metadata.
+          message = await attachTrackerWorkflowPublication(repoRoot, run.trackerWorkflow, outcome.url);
+        } catch (error) {
+          const reason = error instanceof TrackerWorkflowError || error instanceof TrackerAgentBindingError
+            ? error.message : 'Check the captured Linear connection and issue access.';
+          message = `Linear linking failed; the PR/MR remains published. ${reason} Continue this run with the verified URL to retry linking.`;
+        }
+        store.appendEvent(id, { type: 'note', message });
+      }
       return c.json({ url: outcome.url, dryRun: outcome.dryRun }, 201);
     })
 

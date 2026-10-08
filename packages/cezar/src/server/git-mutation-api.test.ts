@@ -6,7 +6,8 @@ import { RunStore } from '../runs/store.ts';
 import type { RunManager } from '../workflows/run.ts';
 import { apiRequest } from './loopback-request.testkit.ts';
 
-const mocks = vi.hoisted(() => ({ branch: vi.fn(), commit: vi.fn(), push: vi.fn(), publish: vi.fn(), active: vi.fn() }));
+const mocks = vi.hoisted(() => ({ attach: vi.fn(), branch: vi.fn(), commit: vi.fn(), push: vi.fn(), publish: vi.fn(), active: vi.fn() }));
+vi.mock('./tracker/linear-workflow.ts', async original => ({ ...await original<typeof import('./tracker/linear-workflow.ts')>(), attachTrackerWorkflowPublication: mocks.attach }));
 vi.mock('./git-changes.ts', async original => ({ ...await original<typeof import('./git-changes.ts')>(), checkTaskBranch: mocks.branch, commitAll: mocks.commit, pushCurrentBranch: mocks.push }));
 vi.mock('./git.ts', async original => ({ ...await original<typeof import('./git.ts')>(), getRepoInfo: vi.fn().mockResolvedValue({ root: '/repo', branch: 'main', remote: 'https://gitlab.com/team/repo.git' }) }));
 vi.mock('./forge/index.ts', async original => ({ ...await original<typeof import('./forge/index.ts')>(), resolveForge: () => ({ kind: 'gitlab', createPR: mocks.publish }) }));
@@ -22,6 +23,7 @@ beforeEach(() => {
   id = store.createRun({ title: 'Review task', task: 'Fix it', workflow: 'quick-task', steps: [] }).id;
   store.updateRun(id, { status: 'review', worktreePath: root, branch: 'cez/test' });
   mocks.active.mockReset().mockReturnValue(false);
+  mocks.attach.mockReset().mockResolvedValue('Linear workflow: publication link confirmed, status unchanged.');
   mocks.branch.mockReset().mockResolvedValue({ ok: true, branch: 'cez/test' });
   mocks.commit.mockReset().mockResolvedValue({ ok: true, sha: 'a'.repeat(40) });
   mocks.push.mockReset().mockResolvedValue({ ok: true, branch: 'cez/test', remote: 'origin', upstreamSet: true });
@@ -98,4 +100,40 @@ it.each(['git/commit', 'git/push'])('checks task base branch before %s mutates g
   expect(mocks.branch).toHaveBeenCalledWith(root, 'origin/develop');
   expect(mocks.commit).not.toHaveBeenCalled();
   expect(mocks.push).not.toHaveBeenCalled();
+});
+
+const binding = {
+  association: { kind: 'linear' as const, source: { id: 'org', webUrl: 'https://linear.app/acme' }, externalId: '11111111-1111-4111-8111-111111111111', externalName: 'Team', connectionId: '22222222-2222-4222-8222-222222222222' },
+  itemId: 'OPS-1', url: 'https://linear.app/acme/issue/OPS-1', delegateCredentials: true as const,
+};
+
+it.each(['https://github.com/team/repo/pull/1', 'https://gitlab.com/team/repo/-/merge_requests/1'])('links only verified publication outcome to consented Linear issue: %s', async url => {
+  store.updateRun(id, { trackerWorkflow: binding, pullRequestUrl: 'https://untrusted.example/pull/42' });
+  mocks.publish.mockResolvedValue({ ok: true, url, dryRun: false });
+  for (const prefix of ['/api/v1', '/api/v1/p/default']) {
+    expect((await post('pr', prefix)).status).toBe(201);
+  }
+  expect(mocks.attach).toHaveBeenCalledWith(root, binding, url);
+  expect(store.readEvents(id).some(event => event.message === 'Linear workflow: publication link confirmed, status unchanged.')).toBe(true);
+});
+
+it('keeps publication successful when Linear linking fails, without exposing vendor error bodies', async () => {
+  store.updateRun(id, { trackerWorkflow: binding });
+  mocks.attach.mockRejectedValue(new Error('private vendor token body'));
+  const response = await post('pr');
+  expect(response.status).toBe(201);
+  expect(store.getRun(id)).toMatchObject({ status: 'done', pullRequestUrl: 'https://gitlab.com/team/repo/-/merge_requests/1' });
+  const events = JSON.stringify(store.readEvents(id));
+  expect(events).toContain('Linear linking failed');
+  expect(events).not.toContain('private vendor token body');
+});
+
+it('does not link unconsented, dry-run or failed publication', async () => {
+  expect((await post('pr')).status).toBe(201);
+  store.updateRun(id, { trackerWorkflow: binding });
+  mocks.publish.mockResolvedValueOnce({ ok: true, url: 'https://gitlab.com/team/repo/-/merge_requests/777', dryRun: true });
+  expect((await post('pr')).status).toBe(201);
+  mocks.publish.mockResolvedValueOnce({ ok: false, error: 'offline' });
+  expect((await post('pr')).status).toBe(409);
+  expect(mocks.attach).not.toHaveBeenCalled();
 });

@@ -409,7 +409,7 @@ export function ThreadView({
         {run.status === 'review' ? <ReviewPanel run={run} diffComments={diffComments} /> : null}
         {run.trackerWorkflow?.association.kind === 'linear' && isHttpUrl(run.pullRequestUrl) && !isRunActive(run.status) ? (
           <p data-slot="linear-publication-followup" className="rounded-md border border-border p-3 text-xs text-muted-foreground">
-            The cockpit's draft button does not update Linear. If writeback is still needed, Continue this same run with the published URL to verify and attach it, then move the issue to a non-completed review state. Do not mark Done or merge.
+            The cockpit attempts to attach its verified publication to Linear. Check the task notes for confirmation or a linking failure. If linking failed, Continue this same run with the verified URL to retry, or attach it in Linear. Review status remains your team's decision. Do not mark Done or merge automatically.
           </p>
         ) : null}
       </div>

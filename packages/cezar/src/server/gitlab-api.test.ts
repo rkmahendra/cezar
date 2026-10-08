@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -17,6 +17,8 @@ it('publishes a GitLab draft through both route mounts and never merges', async 
   root = mkdtempSync(join(tmpdir(), 'cez-gitlab-route-'));
   const git = (args: string[]) => execFileSync('git', args, { cwd: root, stdio: 'ignore' });
   git(['init', '-b', 'cez/test']);
+  // RunStore writes asynchronously. Real task worktrees exclude cezar state from autosave.
+  writeFileSync(join(root, '.git/info/exclude'), '/.ai/\n');
   git(['-c', 'user.name=test', '-c', 'user.email=test@example.com', 'commit', '--allow-empty', '-m', 'test']);
   git(['remote', 'add', 'origin', 'https://gitlab.com/group/sub/app.git']);
   store = RunStore.open(join(root, '.ai/cezar'));

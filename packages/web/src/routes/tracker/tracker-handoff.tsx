@@ -103,7 +103,7 @@ export function TrackerHandoff({ item, association, workflows, skills, selection
           <span>Allow Linear workflow writeback for this run</span>
         </label>
         <p className="mt-2 text-muted-foreground">This delegates this project's Linear API key to every agent step and Continue session in this run. The agent can use the key's full permissions, not only this issue. Use a narrowly scoped key. Browsing and unchecked handoffs remain read-only.</p>
-        <p className="mt-2 text-muted-foreground">Agent-driven updates, not guaranteed sync: in-progress on start, then link the confirmed draft MR/PR and move to review. Never Done on task completion or auto-merge. Publication needs separate approval. After using the cockpit's draft button, Continue the same run with the published URL to finish writeback.</p>
+        <p className="mt-2 text-muted-foreground">Cezar verifies the issue and moves it to In Progress before agent work, using the team's unique matching started state or its only started state. Ambiguous states block work; existing started states are preserved. The cockpit links the verified MR/PR after you approve publication. No automatic Review or Done status, push or merge. Failed linking is reported in the task for explicit retry.</p>
       </div> : null}
       <div className="mt-3 flex flex-wrap items-center gap-2">
         <WorkflowPicker workflows={workflows} value={workflow} onChange={setWorkflow} slotPrefix="tracker" />

@@ -40,6 +40,12 @@ its URL. Existing GitHub tasks retain **Draft PR** / **Create PR**. Publication 
 merge. Errors leave the run available for retry. For GitLab, conversation, detailed
 pipeline checks, changed-file review and merging remain in GitLab's own UI.
 
+Commit/push reject task checkouts on a known base/default branch. Publication also verifies
+the forge's default/target and push destination before autosave, pushes only the current task
+branch without inherited tag/submodule/auto-merge options, and reuses a matching open PR/MR.
+For an explicitly opted-in Linear workflow, the cockpit attaches the verified publication
+URL to the issue. A linking failure is reported separately and never hides a published request.
+
 The existing `/api/v1/github` API and `/github` page paths are retained for compatibility,
 but their list/search/publication operations select the repository's forge. GitLab rows
 retain the shared `kind: "pr"` wire value, representing merge requests, with GitLab URLs.
@@ -48,5 +54,6 @@ fallback data. Numeric-only GitHub reference chips and GitHub event automations 
 GitLab features. Schedule and Linear tracker automations remain independent of forge.
 
 For the complete tracker journey, see [Linear workflow](linear-forge-workflow.md).
+See [audit findings](forge-linear-audit.md) for corrected gaps and verification evidence.
 This support is covered by offline API/CLI fixtures, not a certification of every
 self-managed vendor version or an assertion that your organization's access is configured.
