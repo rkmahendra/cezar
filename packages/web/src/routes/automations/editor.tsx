@@ -56,7 +56,7 @@ function sectionOf(message: string): ErrorSection {
 }
 
 const PLACEHOLDER = {
-  tracker: 'Implement {{tracker.key}} and prepare a pull request.',
+  tracker: 'Implement {{tracker.key}} and prepare changes for review before publishing a draft MR/PR.',
   schedule: 'Describe the task the agent should do each time. Placeholders: {{date}}, {{project}}',
   github: 'Describe the task the agent should do for each match. Placeholders: {{github.url}}, {{github.title}}, {{github.number}}, {{github.labels}}',
 } as const

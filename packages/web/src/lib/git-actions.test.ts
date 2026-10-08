@@ -98,6 +98,19 @@ describe('gitActionPolicy — commit', () => {
       expect(find(withState({ status }), 'commit')?.enabled).toBe(true)
     },
   )
+
+  it.each<RunStatus>(['running'])('blocks all git writes while %s', status => {
+    for (const id of ['commit', 'push', 'create-pr']) expect(find(withState({ status }), id)?.enabled).toBe(false)
+  })
+
+  it('blocks concurrent writes but leaves the published MR link usable', () => {
+    for (const id of ['commit', 'push', 'create-pr']) expect(find(withState({ busy: true }), id)?.enabled).toBe(false)
+    expect(find(withState({ busy: true, forge: null, prUrl: 'https://git.example.com/team/app/-/merge_requests/7' }), 'view-pr')).toMatchObject({ label: 'View MR', enabled: true })
+  })
+
+  it('honors explicit GitLab unavailability', () => {
+    expect(find(withState({ forge: { kind: 'gitlab', available: false, reason: 'glab login required' } }), 'create-pr')).toMatchObject({ enabled: false, reason: 'Create MR unavailable: glab login required' })
+  })
 })
 
 describe('gitActionPolicy — push', () => {

@@ -19,6 +19,7 @@ import {
 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from 'react'
 import { useParams } from 'react-router'
+import { queryScope } from '@open-mercato/cezar-api-client'
 
 import { Link, Navigate } from '@/lib/project-router'
 
@@ -193,6 +194,8 @@ export function GithubRoute({
   const checksMap = checksQuery.data?.available ? checksQuery.data.checks : undefined
 
   const queryClient = useQueryClient()
+  const scope = queryScope()
+  const listKey = queryKeys.github({ limit: LIST_LIMIT })
 
   // Persist the tab choice (#417), mirroring the appearance provider's read-then-write
   // pattern. The cache is patched BEFORE the PUT resolves — not just for optimism, but so
@@ -238,29 +241,35 @@ export function GithubRoute({
   const openThreadRef = useRef<{ kind: 'issue' | 'pr'; number: number } | null>(null)
 
   const refresh = useMutation({
-    mutationFn: () => getGithub({ refresh: true, limit: LIST_LIMIT }),
-    onSuccess: (data) => {
+    mutationFn: async () => {
+      const open = openThreadRef.current
+      const thread = !isGitlab && open
+        ? { key: queryKeys.githubComments(open.kind, open.number), promise: getGithubComments(open.kind, open.number, { refresh: true }).catch(() => undefined) }
+        : null
+      return { data: await getGithub({ refresh: true, limit: LIST_LIMIT }), thread, scope, listKey, isGitlab }
+    },
+    onSuccess: ({ data, thread, scope, listKey, isGitlab }) => {
       // One list query now (#664) — patch it directly, then re-hydrate the visible checks window
       // so glyphs track the fresh rows (they carry their own ≤60 s cache server-side).
-      queryClient.setQueryData(queryKeys.github({ limit: LIST_LIMIT }), data)
-      void queryClient.invalidateQueries({ queryKey: queryKeys.githubChecks(checkPrNumbers) })
+      queryClient.setQueryData(listKey, data)
+      if (isGitlab) return
+      void queryClient.invalidateQueries({ queryKey: [scope, 'github', 'checks'] })
 
       // The open thread must be re-fetched with `refresh: true` (#525). Invalidating its key is
       // NOT enough, and was the bug in the first attempt: an invalidate re-requests
       // `/api/github/comments/…` WITHOUT `refresh=1`, and the route only busts `commentsCache`
       // when that param is present — so the client dutifully refetched and was handed the same
       // ≤60 s-old object. Pressing refresh has to reach `gh`, or it is theatre.
-      const open = openThreadRef.current
-      if (!open) {
+      if (!thread) {
         // No thread on screen (the unavailable branch) — nothing mounted, so clearing is free.
-        void queryClient.removeQueries({ queryKey: ['github', 'comments'] })
+        void queryClient.removeQueries({ queryKey: [scope, 'github', 'comments'] })
         return
       }
-      const openKey = queryKeys.githubComments(open.kind, open.number)
+      const openKey = thread.key
       // Fire-and-forget rather than awaited in `mutationFn`: a thread fetch that fails must not
       // discard an already-successful list refresh.
-      void getGithubComments(open.kind, open.number, { refresh: true })
-        .then((thread) => queryClient.setQueryData(openKey, thread))
+      void thread.promise
+        .then((data) => { if (data) queryClient.setQueryData(openKey, data) })
         .catch(() => {
           /* the list refresh still landed; leave the thread showing what it has */
         })
@@ -268,7 +277,7 @@ export function GithubRoute({
       // next opened. The open one MUST be excluded: removing a mounted query resets it to pending
       // and flashes the loading skeleton under the user.
       void queryClient.removeQueries({
-        queryKey: ['github', 'comments'],
+        queryKey: [scope, 'github', 'comments'],
         predicate: (q) => q.queryHash !== hashKey(openKey),
       })
     },
@@ -385,14 +394,12 @@ export function GithubRoute({
           title={`${forgeLabel} is unavailable here`}
           subtitle={gh.reason ?? 'unknown reason'}
           actions={
-            <Button
-              variant="outline"
-              data-action="gh-retry"
-              disabled={refresh.isPending}
-              onClick={() => refresh.mutate()}
-            >
-              Try again
-            </Button>
+            <>
+              <Button variant="outline" data-action="gh-retry" disabled={refresh.isPending} onClick={() => refresh.mutate()}>
+                Try again
+              </Button>
+              <Button variant="outline" asChild><Link to="/settings/forge">Set up GitHub or GitLab</Link></Button>
+            </>
           }
         >
           <p className="text-xs leading-relaxed text-soft-foreground">
@@ -923,8 +930,8 @@ function GithubDetail({
 
       <h2 className="mt-2 text-xl leading-snug font-semibold">{item.title}</h2>
 
-      {item.kind === 'pr' ? (
-        <nav aria-label={isGitlab ? 'Merge request detail' : 'Pull request detail'} className="mt-4 flex border-b border-border">
+      {item.kind === 'pr' && !isGitlab ? (
+        <nav aria-label="Pull request detail" className="mt-4 flex border-b border-border">
           <TabLink to={`/github/prs/${item.number}`} active={!changes}>Conversation</TabLink>
           <TabLink to={`/github/prs/${item.number}/changes`} active={changes}>Changes</TabLink>
         </nav>

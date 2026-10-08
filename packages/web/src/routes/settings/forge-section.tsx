@@ -3,6 +3,7 @@ import { useState } from 'react'
 
 import { getForgeConnection } from '@/api/client'
 import { useProjectScope } from '@/api/project-scope-context'
+import { queryKeys, workspaceQueryKeys } from '@/api/queries'
 import { Button } from '@/components/ui/button'
 import { isHttpUrl } from '@/lib/utils'
 
@@ -15,11 +16,18 @@ export function ForgeSection() {
 function ForgeConnectionPanel({ projectId }: { projectId: string | null }) {
   const queryClient = useQueryClient()
   const queryKey = ['forge-connection', projectId ?? 'default'] as const
+  const reconcile = () => {
+    void queryClient.invalidateQueries({ queryKey: queryKeys.health })
+    void queryClient.invalidateQueries({ queryKey: workspaceQueryKeys.projects })
+    // Stale lists must reload on next visit, not launch vendor reads from Settings.
+    void queryClient.invalidateQueries({ queryKey: [projectId ?? 'default', 'github'], refetchType: 'none' })
+    void queryClient.invalidateQueries({ queryKey: [projectId ?? 'default', 'repo'], refetchType: 'none' })
+  }
   const connection = useQuery({ queryKey, queryFn: ({ signal }) => getForgeConnection(false, { signal }), staleTime: Infinity, refetchOnMount: 'always' })
   const [provider, setProvider] = useState<'github' | 'gitlab'>('github')
   const test = useMutation({
     mutationFn: () => getForgeConnection(true),
-    onSuccess: data => { queryClient.setQueryData(queryKey, data) },
+    onSuccess: data => { queryClient.setQueryData(queryKey, data); reconcile() },
   })
   const data = connection.data
   const kind = data?.kind ?? provider
@@ -43,7 +51,7 @@ function ForgeConnectionPanel({ projectId }: { projectId: string | null }) {
     {error ? <p role="alert" className="text-sm text-danger">{error.message}</p> : data?.reason ? <p className="text-sm text-muted-foreground">{data.reason}</p> : null}
     <div className="flex flex-wrap gap-2">
       <Button disabled={busy || !data?.kind || connection.isError} onClick={() => test.mutate()}>Test connection</Button>
-      <Button variant="outline" disabled={busy} onClick={() => { test.reset(); void connection.refetch() }}>Reload connection</Button>
+      <Button variant="outline" disabled={busy} onClick={() => { test.reset(); void connection.refetch().then(reconcile) }}>Reload connection</Button>
       {data?.url && isHttpUrl(data.url) ? <Button variant="outline" asChild><a href={data.url} target="_blank" rel="noopener noreferrer">Open repository</a></Button> : null}
     </div>
     <p className="text-xs text-muted-foreground">Testing performs a fresh repository read, not a push or permission change. A successful test does not prove Git push access. Nothing is tested automatically.</p>
