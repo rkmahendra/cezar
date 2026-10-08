@@ -99,11 +99,21 @@ export function createGitlabDriver(repoRoot: string, repoRef: GitlabRepoRef): Fo
     return ref;
   }
   async function command(bin: 'glab' | 'git', args: string[], cwd = repoRoot, timeout = 15_000): Promise<string> {
-    // Global token/host overrides bypass glab's per-host credential lookup. Never send one
-    // project's token to another host. GLAB_CONFIG_DIR still selects the user's CLI store.
+    // Global token overrides bypass glab's per-host credential lookup. Forward only to
+    // their explicit native host (or gitlab.com when unspecified). Native CLI auth remains
+    // the fallback, including GLAB_CONFIG_DIR. Never pass GitHub tokens into glab.
     const env: NodeJS.ProcessEnv = { ...process.env, NO_PROMPT: '1', GIT_TERMINAL_PROMPT: '0' };
     if (bin === 'glab') {
-      for (const name of ['GITLAB_TOKEN', 'GITLAB_ACCESS_TOKEN', 'GLAB_TOKEN', 'OAUTH_TOKEN', 'CI_JOB_TOKEN', 'JOB_TOKEN',
+      const configuredHost = env.GITLAB_HOST || env.GL_HOST || 'gitlab.com';
+      let tokenHost: string | undefined;
+      try {
+        const url = new URL(configuredHost.includes('://') ? configuredHost : `https://${configuredHost}`);
+        if (!url.username && !url.password && url.pathname === '/' && !url.search && !url.hash) tokenHost = url.host.toLowerCase();
+      } catch { /* Invalid host never authorizes a process-wide token. */ }
+      if (tokenHost !== ref?.host.toLowerCase()) {
+        for (const name of ['GITLAB_TOKEN', 'GITLAB_ACCESS_TOKEN', 'GLAB_TOKEN', 'OAUTH_TOKEN', 'CI_JOB_TOKEN', 'JOB_TOKEN']) delete env[name];
+      }
+      for (const name of ['GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN',
         'GITLAB_HOST', 'GITLAB_URI', 'GITLAB_URL', 'GL_HOST', 'REMOTE_ALIAS', 'GIT_REMOTE_URL_VAR']) delete env[name];
     }
     try {
@@ -199,7 +209,7 @@ export function createGitlabDriver(repoRoot: string, repoRef: GitlabRepoRef): Fo
       if (saved === 'failed') throw new GitlabError('Could not commit the final changes. Check git status in the worktree.');
       // autosave's recovery-oriented helper treats an unreadable status as nothing-to-do.
       // Publishing cannot: prove the final flush left a readable, clean worktree.
-      // Test mutation: final status guard removed temporarily.
+      if ((await command('git', ['status', '--porcelain'], cwd)).trim()) throw new GitlabError('Worktree still has uncommitted changes. Check git status before publishing.');
       if (process.env.CEZ_DRY_RUN === '1') return { ok: true, url: `${base}/-/merge_requests/777`, dryRun: true };
 
       // Refuse a switched origin or fork push URL, including multiple push URLs. API routing

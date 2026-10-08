@@ -95,6 +95,32 @@ describe('GitLab forge read operations', () => {
     expect(process.env.GITLAB_TOKEN).toBe('do-not-leak');
   });
 
+  it.each([
+    ['GITLAB_HOST', 'https://gitlab.corp.example', ref.host, true],
+    ['GL_HOST', 'gitlab.corp.example', ref.host, true],
+    ['GITLAB_HOST', 'gitlab.corp.example:8443', 'gitlab.corp.example:8443', true],
+    ['GITLAB_HOST', 'gitlab.corp.example:8443', ref.host, false],
+    ['GITLAB_HOST', 'https://secret@gitlab.corp.example', ref.host, false],
+    ['GITLAB_HOST', 'https://gitlab.corp.example/path', ref.host, false],
+    ['GITLAB_HOST', '', 'gitlab.com', true],
+    ['GITLAB_HOST', '', ref.host, false],
+  ])('binds env auth %s=%s only to %s', async (name, value, host, allowed) => {
+    vi.stubEnv('GITLAB_HOST', '');
+    vi.stubEnv('GL_HOST', '');
+    vi.stubEnv(name, value);
+    vi.stubEnv('GITLAB_TOKEN', 'scoped-gitlab-token');
+    vi.stubEnv('OAUTH_TOKEN', 'scoped-oauth-token');
+    vi.stubEnv('GITHUB_TOKEN', 'never-forward-github-token');
+    vi.stubEnv('GH_TOKEN', 'never-forward-gh-token');
+    await createGitlabDriver(root, { ...ref, host }).detect();
+    const env = apiCalls()[0]![2].env;
+    expect(env.GITLAB_TOKEN).toBe(allowed ? 'scoped-gitlab-token' : undefined);
+    expect(env.OAUTH_TOKEN).toBe(allowed ? 'scoped-oauth-token' : undefined);
+    expect(env.GITHUB_TOKEN).toBeUndefined();
+    expect(env.GH_TOKEN).toBeUndefined();
+    expect(apiCalls()[0]![1][2]).toBe(host);
+  });
+
   it('keeps caches host/project scoped even when one root is reused', async () => {
     const first = createGitlabDriver(root, ref);
     await first.detect();
