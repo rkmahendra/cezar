@@ -3,6 +3,7 @@ import { promisify } from 'node:util';
 import { z } from 'zod';
 import { autosaveCommit } from '../../git-worktree.ts';
 import { buildPrBody } from './github.ts';
+import { parseRemote } from './host-discovery.ts';
 import type { DraftPrInput, DraftPrOutcome, ForgeAvailability, ForgeDriver, ForgeItem, ForgePrStatus } from './types.ts';
 
 /** GitLab REST v4 via the user's installed glab. Community/Enterprise use the same API.
@@ -186,13 +187,9 @@ export function createGitlabDriver(repoRoot: string, repoRef: GitlabRepoRef): Fo
   }
   function matchesRemote(remote: string): boolean {
     if (!remote || /[\r\n]/.test(remote)) return false;
-    try {
-      const scp = /^(?:[^@/:]+@)?([^/:]+):(.+)$/.exec(remote);
-      const url = new URL(remote.includes('://') ? remote : `ssh://${scp?.[1]}/${scp?.[2]}`);
-      const host = ['http:', 'https:'].includes(url.protocol) ? url.host : url.hostname;
-      return ['http:', 'https:', 'ssh:', 'git:', 'git+ssh:'].includes(url.protocol) && host.toLowerCase() === ref?.host.toLowerCase()
-        && url.pathname.replace(/^\//, '').replace(/\.git$/, '').replace(/\/$/, '') === projectPath;
-    } catch { return false; }
+    const remoteRef = parseRemote(remote);
+    return !!remoteRef && remoteRef.host === ref?.host.toLowerCase()
+      && `${remoteRef.owner}/${remoteRef.repo}` === projectPath;
   }
   async function createPR(input: DraftPrInput): Promise<DraftPrOutcome> {
     try {
@@ -204,6 +201,25 @@ export function createGitlabDriver(repoRoot: string, repoRef: GitlabRepoRef): Fo
       // never a stale run.branch or detached HEAD. Full refs below prevent refspec injection.
       const branch = (await command('git', ['symbolic-ref', '--quiet', '--short', 'HEAD'], cwd)).trim();
       await validBranch(branch, cwd);
+      const configured = run.baseBranch?.replace(/^origin\//, '');
+      if (branch === configured) throw new GitlabError('Cannot publish the target branch as a task merge request.');
+      const dryRun = process.env.CEZ_DRY_RUN === '1';
+      // Validate destination and target BEFORE autosave: refusal must not commit on main.
+      let targetProject: z.infer<typeof projectSchema> | undefined;
+      let target: string | undefined;
+      let existing: MergeRequest | undefined;
+      if (!dryRun) {
+        const remote = (await command('git', ['remote', 'get-url', '--push', '--all', 'origin'], cwd)).trim();
+        if (!matchesRemote(remote)) throw new GitlabError('The worktree origin push URL does not match this GitLab project.');
+        targetProject = await project();
+        target = configured && !/^[0-9a-f]{7,40}$/i.test(configured) ? configured : targetProject.default_branch ?? undefined;
+        if (!target) throw new GitlabError('GitLab project has no default branch.');
+        await validBranch(target, cwd);
+        if (branch === target || branch === targetProject.default_branch) throw new GitlabError('Cannot publish the target or default branch as a task merge request.');
+        existing = (await branchMrs(branch, 'opened')).find((mr) => mr.target_project_id === targetProject!.id);
+        if (existing && existing.target_branch !== target) throw new GitlabError('This branch already has an open merge request with a different target branch.');
+        if ((await command('git', ['symbolic-ref', '--quiet', '--short', 'HEAD'], cwd)).trim() !== branch) throw new GitlabError('The worktree branch changed during publication. Try again.');
+      }
       const saved = await autosaveCommit(cwd, 'pre-PR');
       if (saved === 'refused') throw new GitlabError('Worktree has unresolved merge conflicts. Resolve them, then publish again.');
       if (saved === 'failed') throw new GitlabError('Could not commit the final changes. Check git status in the worktree.');
@@ -212,24 +228,12 @@ export function createGitlabDriver(repoRoot: string, repoRef: GitlabRepoRef): Fo
       if ((await command('git', ['status', '--porcelain'], cwd)).trim()) {
         throw new GitlabError('Worktree still has uncommitted changes after autosave. Check git status before publishing.');
       }
-      if (process.env.CEZ_DRY_RUN === '1') return { ok: true, url: `${base}/-/merge_requests/777`, dryRun: true };
-
-      // Refuse a switched origin or fork push URL, including multiple push URLs. API routing
-      // must describe the project receiving the push, not merely the original worktree remote.
-      const remote = (await command('git', ['remote', 'get-url', '--push', '--all', 'origin'], cwd)).trim();
-      if (!matchesRemote(remote)) throw new GitlabError('The worktree origin push URL does not match this GitLab project.');
-      const targetProject = await project();
-      const configured = run.baseBranch?.replace(/^origin\//, '');
-      // Match GitHub: a detached fork SHA is not a base branch, so use the project default.
-      const target = configured && !/^[0-9a-f]{7,40}$/i.test(configured) ? configured : targetProject.default_branch;
-      if (!target) throw new GitlabError('GitLab project has no default branch.');
-      await validBranch(target, cwd);
-      if (branch === target || branch === targetProject.default_branch) throw new GitlabError('Cannot publish the target or default branch as a task merge request.');
-      const existing = (await branchMrs(branch, 'opened')).find((mr) => mr.target_project_id === targetProject.id);
-      if (existing && existing.target_branch !== target) throw new GitlabError('This branch already has an open merge request with a different target branch.');
+      if (dryRun) return { ok: true, url: `${base}/-/merge_requests/777`, dryRun: true };
+      if (!targetProject || !target) throw new GitlabError('GitLab publication target could not be resolved.');
       const current = (await command('git', ['symbolic-ref', '--quiet', '--short', 'HEAD'], cwd)).trim();
       if (current !== branch) throw new GitlabError('The worktree branch changed during publication. Try again.');
-      await command('git', ['push', '-u', '--', 'origin', `refs/heads/${branch}:refs/heads/${branch}`], cwd, 60_000);
+      // push.pushOption can request MR creation or auto-merge. Neither is authorized by a push.
+      await command('git', ['-c', 'push.pushOption=', 'push', '--no-follow-tags', '--recurse-submodules=no', '-u', '--', 'origin', `refs/heads/${branch}:refs/heads/${branch}`], cwd, 60_000);
       const outcome = (mr: MergeRequest): DraftPrOutcome => ({ ok: true, url: `${base}/-/merge_requests/${mr.iid}`, dryRun: false });
       // Keep an existing MR's human-selected draft/ready state. Never duplicate or auto-merge.
       if (existing) return outcome(existing);
@@ -247,7 +251,7 @@ export function createGitlabDriver(repoRoot: string, repoRef: GitlabRepoRef): Fo
       } catch (error) {
         // Concurrent clicks or a timed-out POST can already have created the MR. A bounded
         // re-read makes retries idempotent without interpreting vendor error text.
-        const raced = (await branchMrs(branch, 'opened')).find((mr) => isDraft(mr) && mr.target_project_id === targetProject.id && mr.target_branch === target);
+        const raced = (await branchMrs(branch, 'opened')).find((mr) => isDraft(mr) && mr.target_project_id === targetProject!.id && mr.target_branch === target);
         if (raced) return outcome(raced);
         throw error;
       }
