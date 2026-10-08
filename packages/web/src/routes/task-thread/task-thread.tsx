@@ -37,7 +37,7 @@ import { SkillsDock } from './skills-dock'
 import { collectSkills, collectSubagents, findSubagent, subagentChildren } from './subagent-dock'
 import { SubagentSheet } from './subagent-sheet'
 import { AcceptCelebration, ReviewPanel } from './review-panel'
-import { queuePosition } from './run-actions'
+import { isRunActive, queuePosition } from './run-actions'
 import { RunHeader } from './run-header'
 import { AskCard } from './ask-card'
 import { useRunRecordReconcile } from './run-reconcile'
@@ -384,7 +384,7 @@ export function ThreadView({
                 rel="noopener noreferrer"
                 className="font-medium text-foreground underline-offset-2 hover:underline"
               >
-                PR ↗
+                {taskPrUrl(run)?.includes('/-/merge_requests/') ? 'MR' : 'PR'} ↗
               </a>
             ) : null}
             {/* #526: an issue-subject run (om-prepare-issue) links the issue it created — it
@@ -407,6 +407,11 @@ export function ThreadView({
             auto-merges. The panel exists exactly while the run rests at `review`. */}
         {/* Send back carries the drafted line comments, like the composer does. */}
         {run.status === 'review' ? <ReviewPanel run={run} diffComments={diffComments} /> : null}
+        {run.trackerWorkflow?.association.kind === 'linear' && isHttpUrl(run.pullRequestUrl) && !isRunActive(run.status) ? (
+          <p data-slot="linear-publication-followup" className="rounded-md border border-border p-3 text-xs text-muted-foreground">
+            The cockpit's draft button does not update Linear. If writeback is still needed, Continue this same run with the published URL to verify and attach it, then move the issue to a non-completed review state. Do not mark Done or merge.
+          </p>
+        ) : null}
       </div>
 
       <AcceptCelebration status={run.status} />

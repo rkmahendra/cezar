@@ -155,9 +155,11 @@ function ChangesView({ run }: { run: ApiRun }) {
     localHandoff: health.data?.capabilities.localHandoff ?? false,
     hasSession: lastSessionId(run) !== undefined,
     prUrl: run.pullRequestUrl,
+    busy: commitOpen || push.isPending || createPr.isPending,
   })
 
   const onAction = (id: GitActionId) => {
+    if (commitOpen || push.isPending || createPr.isPending) return
     switch (id) {
       case 'commit':
         setCommitOpen(true)

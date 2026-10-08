@@ -694,6 +694,17 @@ describe('global tasks page', () => {
     expect(chip.getAttribute('href')).toBe('https://github.com/acme/api/pull/5127')
   })
 
+  it('never synthesizes GitHub paths or statuses for numeric-only GitLab references', async () => {
+    stubFetch({
+      projects: [{ ...PROJECTS[0]!, forge: 'gitlab', repoUrl: 'https://git.example.com/team/sub/app' }],
+      runs: [{ ...RUNS[0]!, pullRequestUrl: undefined, referencedPullRequestUrl: undefined, referencedIssueUrl: undefined, markerRefs: undefined, prNumber: 5127 }],
+    })
+    renderPage()
+    await waitFor(() => expect(document.querySelector('[data-run-id="a1"] [data-slot="pr-chip"]')).not.toBeNull())
+    expect(document.querySelector('[data-run-id="a1"] [data-slot="pr-chip"]')?.getAttribute('href')).toBeNull()
+    expect(sent.some(request => request.path.includes('/github/ref-status'))).toBe(false)
+  })
+
   it('leaves a number-only reference inert when its project has no known repo', async () => {
     // Inert text beats a link that goes somewhere invented.
     stubFetch({

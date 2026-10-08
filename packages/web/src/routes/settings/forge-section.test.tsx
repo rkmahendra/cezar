@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, expect, it, vi } from 'vitest'
 import type { ForgeConnection } from '@open-mercato/cezar-api-client'
 import { createQueryClient } from '@/api/query-client'
+import { queryKeys, workspaceQueryKeys } from '@/api/queries'
 import { ProjectScopeProvider } from '@/api/project-scope-context'
 import { ForgeSection } from './forge-section'
 
@@ -13,7 +14,7 @@ function mount(projectId = 'project-a') {
   const client = createQueryClient()
   const view = (id: string) => <QueryClientProvider client={client}><ProjectScopeProvider projectId={id}><ForgeSection /></ProjectScopeProvider></QueryClientProvider>
   const rendered = render(view(projectId))
-  return { ...rendered, changeProject: (id: string) => rendered.rerender(view(id)) }
+  return { ...rendered, client, changeProject: (id: string) => rendered.rerender(view(id)) }
 }
 
 it('shows headless setup, tests only on click and reloads without repeating a vendor probe', async () => {
@@ -74,4 +75,18 @@ it('renders network failures and demo results without claiming real access', asy
   fireEvent.click(screen.getByRole('button', { name: 'Test connection' }))
   await screen.findByRole('alert')
   expect(screen.getByRole('status').textContent).toBe('Connection check unavailable')
+})
+
+it('reconciles discovery after reload without probing other projects or cached vendor lists', async () => {
+  const requests: string[] = []
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => { requests.push(String(input)); return json(connection) }))
+  const { client } = mount()
+  await screen.findByText('team/sub/repo')
+  const keys = [queryKeys.health, workspaceQueryKeys.projects, ['project-a', 'github', 1000], ['project-a', 'repo']]
+  for (const key of [...keys, ['project-b', 'github', 1000]]) client.setQueryData(key, {})
+  fireEvent.click(screen.getByRole('button', { name: 'Reload connection' }))
+  await waitFor(() => expect(client.getQueryState(queryKeys.health)?.isInvalidated).toBe(true))
+  for (const key of keys) expect(client.getQueryState(key)?.isInvalidated).toBe(true)
+  expect(client.getQueryState(['project-b', 'github', 1000])?.isInvalidated).toBe(false)
+  expect(requests).toEqual(['/api/v1/p/project-a/forge/connection', '/api/v1/p/project-a/forge/connection'])
 })

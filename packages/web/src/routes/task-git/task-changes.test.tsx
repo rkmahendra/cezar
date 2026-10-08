@@ -93,7 +93,7 @@ const jsonResponse = (body: unknown, status = 200) =>
 
 /** Fetch stub in the house style (review-panel.test.tsx): records requests, serves the run,
  *  health and changes fixtures, and lets a test override specific `METHOD path` keys. */
-function stubFetch(overrides: Record<string, () => Response> = {}): SentRequest[] {
+function stubFetch(overrides: Record<string, () => Response | Promise<Response>> = {}): SentRequest[] {
   const sent: SentRequest[] = []
   vi.stubGlobal(
     'fetch',
@@ -133,6 +133,26 @@ const toolbarAction = (id: string) =>
 // ---- the route -------------------------------------------------------------------------------
 
 describe('the Changes tab route', () => {
+  it('publishes a GitLab draft after review and locks other writes while pending', async () => {
+    let resolve!: (response: Response) => void
+    let record = RUN
+    const url = 'https://git.example.com/team/sub/app/-/merge_requests/9'
+    const sent = stubFetch({
+      'GET /api/v1/health': () => jsonResponse({ ...HEALTH, forge: { kind: 'gitlab' } }),
+      'GET /api/v1/runs/r1': () => jsonResponse(record),
+      'POST /api/v1/runs/r1/pr': () => new Promise<Response>(done => { resolve = done }),
+    })
+    renderChangesRoute()
+    await waitFor(() => expect(toolbarAction('create-pr')?.textContent).toBe('Create MR'))
+    fireEvent.click(toolbarAction('create-pr')!)
+    await waitFor(() => expect(resolve).toBeTypeOf('function'))
+    for (const id of ['commit', 'push', 'create-pr']) expect(toolbarAction(id)?.disabled).toBe(true)
+    record = { ...RUN, status: 'done', pullRequestUrl: url }
+    resolve(jsonResponse({ url, dryRun: true }, 201))
+    await waitFor(() => expect(toolbarAction('view-pr')?.getAttribute('href')).toBe(url))
+    expect(toolbarAction('view-pr')?.textContent).toBe('View MR')
+    expect(sent.filter(request => request.method === 'POST')).toHaveLength(1)
+  })
   it('renders the run header with the Changes tab active and all tabs deep-linkable', async () => {
     stubFetch()
     renderChangesRoute()

@@ -62,12 +62,12 @@ export function CommitDialog({
 
   const submit = () => {
     const text = message.trim()
-    if (text.length === 0 || commit.isPending) return
+    if (text.length === 0 || commit.isPending || run.status === 'running') return
     commit.mutate(text)
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={(next) => { if (!commit.isPending) onOpenChange(next) }}>
       <DialogContent data-slot="commit-dialog">
         <DialogHeader>
           <DialogTitle>Commit changes</DialogTitle>
@@ -101,12 +101,12 @@ export function CommitDialog({
           }}
         />
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
+          <Button variant="outline" disabled={commit.isPending} onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
           <Button
             data-slot="commit-confirm"
-            disabled={message.trim().length === 0 || commit.isPending}
+            disabled={message.trim().length === 0 || commit.isPending || run.status === 'running'}
             onClick={submit}
           >
             {commit.isPending ? 'Committing…' : 'Commit'}

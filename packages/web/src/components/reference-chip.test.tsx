@@ -35,6 +35,14 @@ function chipOf(ui: React.ReactElement) {
 }
 
 describe('ReferenceChip without a status', () => {
+  it('names a self-hosted GitLab MR accurately without GitHub status claims', () => {
+    const url = 'https://git.example.com/team/sub/repo/-/merge_requests/42'
+    const chip = chipOf(<ReferenceChip reference={{ kind: 'PR', number: 42, url }} taskTitle="Fix checkout" />)
+    expect(chip.textContent).toBe('!42')
+    expect(chip.getAttribute('aria-label')).toBe('Open the merge request for Fix checkout')
+    expect(chip.getAttribute('href')).toBe(url)
+    expect(chip.getAttribute('data-status')).toBeNull()
+  })
   it('is the neutral violet chip, with the URL as its native tooltip', () => {
     // The pre-status treatment, unchanged: nothing is known about the PR, so nothing is claimed.
     const chip = chipOf(<ReferenceChip reference={PR} taskTitle="Add checkout" />)

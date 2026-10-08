@@ -65,7 +65,8 @@ export function ReviewPanel({ run, diffComments }: { run: ApiRun; diffComments?:
 // ---- notes + exits --------------------------------------------------------------------------
 
 function ReviewActions({ run, diffComments }: { run: ApiRun; diffComments?: DiffComments }) {
-  const requestName = useProjectForge()?.kind === 'gitlab' ? 'MR' : 'PR'
+  const forge = useProjectForge()
+  const requestName = (run.pullRequestUrl ? run.pullRequestUrl.includes('/-/merge_requests/') : forge?.kind === 'gitlab') ? 'MR' : 'PR'
   const queryClient = useQueryClient()
   const notesRef = useRef<HTMLTextAreaElement>(null)
   // Review notes are the second-longest thing anyone types into a task, and they are typed while
@@ -119,7 +120,9 @@ function ReviewActions({ run, diffComments }: { run: ApiRun; diffComments?: Diff
   })
 
   const commentCount = diffComments?.comments.length ?? 0
+  const busy = sendBack.isPending || draftPr.isPending || finish.isPending
   const submitNotes = () => {
+    if (busy) return
     const text = notes.trim()
     // Drafted line comments are feedback on their own.
     if (text.length === 0 && commentCount === 0) {
@@ -189,7 +192,7 @@ function ReviewActions({ run, diffComments }: { run: ApiRun; diffComments?: Diff
           size="sm"
           title={continuation.reason ?? "Send the notes back into the agent's session"}
           aria-describedby={!continuation.canContinue ? 'review-provider-guidance' : undefined}
-          disabled={sendBack.isPending || !continuation.canContinue}
+          disabled={busy || !continuation.canContinue}
           onClick={submitNotes}
         >
           <CornerUpLeftIcon aria-hidden="true" />
@@ -218,7 +221,7 @@ function ReviewActions({ run, diffComments }: { run: ApiRun; diffComments?: Diff
             variant="outline"
             size="sm"
             title={`Push the branch and open a draft ${requestName}`}
-            disabled={draftPr.isPending}
+            disabled={busy}
             onClick={() => draftPr.mutate()}
           >
             <GitPullRequestIcon aria-hidden="true" />
@@ -231,7 +234,7 @@ function ReviewActions({ run, diffComments }: { run: ApiRun; diffComments?: Diff
           size="sm"
           className="ml-auto"
           title={finishTitle('review')}
-          disabled={finish.isPending}
+          disabled={busy}
           onClick={() => finish.mutate()}
         >
           <CheckIcon aria-hidden="true" />

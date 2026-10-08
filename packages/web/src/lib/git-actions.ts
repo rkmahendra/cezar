@@ -33,6 +33,8 @@ export interface GitActionState {
   hasSession: boolean
   /** The run's PR, once known — flips Create PR into View PR. */
   prUrl?: string
+  /** A commit dialog or publication request already owns this view. */
+  busy?: boolean
 }
 
 export type GitActionId = 'commit' | 'push' | 'create-pr' | 'view-pr' | 'open-terminal'
@@ -66,7 +68,8 @@ const NO_WORKTREE_REASON = 'no worktree — this task ran directly in the repo w
 function commitAction(state: GitActionState): GitAction {
   const disabled = (reason: string): GitAction => ({ id: 'commit', label: 'Commit', enabled: false, reason })
   if (!state.hasWorktree) return disabled(`Commit unavailable — ${NO_WORKTREE_REASON}`)
-  if (state.status === 'running') return disabled('Commit unavailable — the agent is still working in this worktree')
+  if (state.busy) return disabled('Commit unavailable: another git action is in progress')
+  if (state.status === 'running') return disabled('Commit unavailable: the agent is still working in this worktree')
   if (state.changedFiles === undefined) return disabled('Commit unavailable — changes are still loading')
   if (state.changedFiles === 0) return disabled('Commit unavailable — no changes to commit')
   return { id: 'commit', label: 'Commit', enabled: true }
@@ -75,9 +78,10 @@ function commitAction(state: GitActionState): GitAction {
 function pushAction(state: GitActionState): GitAction {
   const disabled = (reason: string): GitAction => ({ id: 'push', label: 'Push', enabled: false, reason })
   if (!state.hasWorktree) return disabled(`Push unavailable — ${NO_WORKTREE_REASON}`)
+  if (state.busy) return disabled('Push unavailable: another git action is in progress')
   if (state.remote === undefined) return disabled('Push unavailable — no remote configured')
   if (state.branch === undefined) return disabled('Push unavailable — the run has no branch to push')
-  if (state.status === 'running') return disabled('Push unavailable — the agent is still working in this worktree')
+  if (state.status === 'running') return disabled('Push unavailable: the agent is still working in this worktree')
   return { id: 'push', label: 'Push', enabled: true }
 }
 
@@ -89,13 +93,14 @@ function createPrAction(state: GitActionState): GitAction {
     enabled: false,
     reason,
   })
+  if (state.busy) return disabled(`${label} unavailable: another git action is in progress`)
   if (!state.hasWorktree || state.branch === undefined) {
     return disabled(`${label} unavailable: ${NO_WORKTREE_REASON}`)
   }
   if (state.forge === null) {
     return disabled('Create PR unavailable: no supported forge remote (GitHub or GitLab) detected')
   }
-  if (!state.forge.available && state.forge.kind !== 'gitlab') {
+  if (state.forge.available === false || (!state.forge.available && state.forge.kind !== 'gitlab')) {
     return disabled(`${label} unavailable: ${state.forge.reason ?? 'the forge is unreachable'}`)
   }
   // The server refuses `POST /pr` while the engine owns the run — mirror it honestly here
@@ -116,7 +121,7 @@ function createPrAction(state: GitActionState): GitAction {
  */
 export function gitActionPolicy(state: GitActionState): GitActionBar {
   const primary: GitAction = state.prUrl
-    ? { id: 'view-pr', label: state.forge?.kind === 'gitlab' ? 'View MR' : 'View PR', enabled: true, href: state.prUrl }
+    ? { id: 'view-pr', label: state.prUrl.includes('/-/merge_requests/') ? 'View MR' : 'View PR', enabled: true, href: state.prUrl }
     : commitAction(state)
 
   const secondary: GitAction[] = state.prUrl

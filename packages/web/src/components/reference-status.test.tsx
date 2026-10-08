@@ -7,6 +7,9 @@ import { REFERENCE_STATUS_MAX } from '@open-mercato/cezar-api-client'
 
 import {
   __clearRememberedStatusesForTests,
+  queryKeys,
+  rememberReferenceStatuses,
+  workspaceQueryKeys,
   restoreRememberedStatuses,
   type ReferenceStatusRequest,
 } from '@/api/queries'
@@ -47,6 +50,8 @@ beforeEach(() => {
   vi.stubGlobal(
     'fetch',
     vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input) === '/api/v1/projects') return jsonResponse({ projects: [], bootProject: 'api', projectsDir: '/repos' })
+      if (String(input) === '/api/v1/health') return jsonResponse({ forge: null })
       asked.push(String(input))
       // One scripted answer per request, so a test can make the SECOND fetch fail or hang.
       const next = answers.shift() ?? { available: false, reason: 'no answer scripted' }
@@ -66,6 +71,19 @@ afterEach(() => {
 
 const PR = { kind: 'PR' as const, number: 774, url: 'https://github.com/acme/api/pull/774' }
 const REQUESTS: ReferenceStatusRequest[] = [{ projectId: 'api', kind: 'PR', number: 774 }]
+
+it('does not request or reuse GitHub statuses after a project becomes GitLab', async () => {
+  const client = createQueryClient()
+  client.setQueryData(queryKeys.health, { forge: null })
+  client.setQueryData(workspaceQueryKeys.projects, { projects: [{ id: 'api', forge: 'gitlab' }], bootProject: 'boot' })
+  rememberReferenceStatuses({ api: { prs: { 774: 'merged' }, issues: {} } })
+  render(<QueryClientProvider client={client}><ReferenceStatusProvider projectId="api" requests={REQUESTS}>
+    <ReferenceChip reference={{ ...PR, url: 'https://git.example.com/group/app/-/merge_requests/774' }} taskTitle="Fix" />
+  </ReferenceStatusProvider></QueryClientProvider>)
+  await waitFor(() => expect(screen.getByRole('link', { name: 'Open the merge request for Fix' })).toBeTruthy())
+  expect(asked).toEqual([])
+  expect(chip().getAttribute('data-status')).toBeNull()
+})
 
 function renderChip(requests: readonly ReferenceStatusRequest[] = REQUESTS) {
   return render(

@@ -31,6 +31,12 @@ function item(overrides: Partial<GithubItem> = {}): GithubItem {
 }
 
 describe('githubTaskPrompt', () => {
+  it('retains the GitLab URL when edited instructions only name an ambiguous number', () => {
+    for (const kind of ['pr', 'issue'] as const) {
+      const entry = item({ kind, url: `https://git.example.com/group/app/-/${kind === 'pr' ? 'merge_requests' : 'issues'}/142` })
+      expect(composeGithubTask(entry, [], `${kind} #142 needs follow-up fixes`)).toContain(entry.url)
+    }
+  })
   it('keeps GitLab identity without manufacturing a GitHub numeric reference', () => {
     const task = githubTaskPrompt(item({ kind: 'pr', url: 'https://git.example.com/group/sub/demo/-/merge_requests/142' }))
     expect(task).toContain('Address GitLab merge request [142]')

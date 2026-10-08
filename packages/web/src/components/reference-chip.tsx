@@ -126,10 +126,11 @@ export function ReferenceChip({
   compact?: boolean
 }) {
   const { kind, number, url } = reference
+  const isGitlab = /\/-\/(?:merge_requests|issues)\//.test(url ?? '')
   // An explicit `status` wins — it is what a test or a one-off caller passes — and otherwise the
   // surface's provider answers. Outside a provider neither exists and this is the chip the cockpit
   // has always painted.
-  const entry = useReferenceStatus(kind, number, projectId)
+  const entry = useReferenceStatus(kind, isGitlab ? undefined : number, projectId)
   const status = explicitStatus ?? entry.status
   // A status this bundle has never heard of resolves to `undefined` here and is then treated
   // exactly like no status at all — the neutral chip, no glyph, no claim in the accessible name.
@@ -151,8 +152,8 @@ export function ReferenceChip({
   )
   // The overridden status rides along into the tooltip whenever the conflict took the chip.
   const tooltip = statusTooltip(entry, presentation, conflicting ? statusPresentation : undefined)
-  const label = number ? `${!compact && kind === 'Issue' ? 'Issue ' : ''}#${number}` : kind
-  const kindWord = kind === 'PR' ? 'pull request' : 'issue'
+  const label = number ? `${!compact && kind === 'Issue' ? 'Issue ' : ''}${isGitlab && kind === 'PR' ? '!' : '#'}${number}` : isGitlab && kind === 'PR' ? 'MR' : kind
+  const kindWord = kind === 'PR' ? (isGitlab ? 'merge request' : 'pull request') : 'issue'
   // The accessible name carries the status too — a screen reader gets what the color says.
   const ariaLabel = `Open the ${kindWord} for ${taskTitle}${presentation ? ` — ${presentation.label}` : ''}`
 

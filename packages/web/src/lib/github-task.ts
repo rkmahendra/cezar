@@ -80,6 +80,9 @@ export function applyItemTokens(text: string, item: GithubItem): string {
  */
 export function mentionsItem(text: string, item: GithubItem): boolean {
   if (text.includes(item.url)) return true
+  // GitLab issues and MRs have independent number sequences. A bare GitHub-style
+  // reference cannot identify either one, especially on a self-hosted forge.
+  if (/\/-\/(?:merge_requests|issues)\//.test(item.url)) return false
   const worded =
     item.kind === 'pr'
       ? String.raw`(?:pull\s+request|pr)`
