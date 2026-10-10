@@ -2,7 +2,6 @@ import type { TrackerAssociation, TrackerWorkflow } from '@open-mercato/cezar-co
 import { TrackerAgentBindingError } from '../server/tracker/agent-credentials.ts';
 import { trackerWorkflowPrompt } from '../server/tracker/workflow.ts';
 import { randomUUID } from 'node:crypto';
-import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import {
@@ -122,8 +121,7 @@ import {
   type WorkflowStepDef,
 } from './types.ts';
 import { freshContinuationContext } from './continuation-context.ts';
-
-const CHECK_OUTPUT_CAP = 20_000;
+import { startCheck, type CheckExecution, type CheckResult } from './check.ts';
 
 async function configuredModelProvider(
   backend: RunnerId,
@@ -371,6 +369,7 @@ interface ActiveRun {
   cwd: string;
   /** Live claude session of the currently running agent step, if any. */
   session?: AgentSession;
+  check?: CheckExecution;
   currentStepId?: string;
   idleTimer?: NodeJS.Timeout;
   /** The inactivity watchdog closed this session; a plain final wait is not success evidence. */
@@ -1143,7 +1142,7 @@ export class RunManager {
       if (!usage || usage.rssBytes <= limitBytes) continue;
       if (this.memoryPausing.has(runId)) continue;
       const state = this.active.get(runId);
-      if (!state?.session?.open || state.cancelled) continue;
+      if (!state || (!state.session?.open && !state.check) || state.cancelled) continue;
       this.memoryPausing.add(runId);
       const usedMb = Math.round(usage.rssBytes / (1024 * 1024));
       this.store.appendEvent(runId, {
@@ -1158,7 +1157,8 @@ export class RunManager {
       // pump the queue. Suppress autonomous auto-continue so the pause actually holds.
       state.autonomous = false;
       this.clearIdleTimer(state);
-      state.session.end();
+      if (state.check) state.check.interrupt();
+      else state.session?.end();
     }
   }
 
@@ -1589,7 +1589,7 @@ export class RunManager {
       .reverse()
       .find((step) => step.status === 'pending' && step.id.startsWith('continue-'));
     const sessionStep = queuedContinuation
-      ? [...run.steps].reverse().find((step) => step.id !== queuedContinuation.id && step.sessionId)
+      ? latestSessionStep(run.steps.filter(step => step.id !== queuedContinuation.id))
       : undefined;
     if (queuedContinuation && sessionStep?.sessionId) {
       const backend = run.runner ?? 'claude';
@@ -2904,7 +2904,16 @@ export class RunManager {
     // A startup wedge has no provider session to reap, so release its slot immediately. Once a
     // session has opened, keep the slot until its interrupt/teardown settles; admitting a
     // replacement while a non-cooperative provider is still alive would violate maxParallel.
-    if (!state.sessionEverOpened || !state.session) {
+    if (state.check) {
+      const check = state.check;
+      // The cancelled status is immediate, but the writer's slot/lease lasts until reaping.
+      void check.result.then(() => {
+        if (this.active.get(runId) === state) {
+          this.recordUsagePeaks(runId, state);
+          this.dropActive(runId, state);
+        }
+      });
+    } else if (!state.sessionEverOpened || !state.session) {
       this.dropActive(runId, state);
     } else {
       state.cancellationTimer = setTimeout(() => {
@@ -3389,7 +3398,7 @@ export class RunManager {
     if (!['done', 'failed', 'cancelled', 'review'].includes(run.status)) {
       return { ok: false, error: `cannot continue a ${run.status} run` };
     }
-    const sessionStep = [...run.steps].reverse().find((s) => s.sessionId);
+    const sessionStep = latestSessionStep(run.steps);
     if (!sessionStep?.sessionId) return { ok: false, error: 'no agent session to resume' };
     const targetRunner = opts.runner ?? run.runner ?? 'claude';
     // Session ids are provider-owned opaque values. New records carry explicit
@@ -3470,6 +3479,10 @@ export class RunManager {
     const continuations = run.steps.filter((s) => s.id.startsWith('continue-')).length;
     const stepId = `continue-${continuations + 1}`;
     this.store.addStep(runId, { id: stepId, name: 'Continue', kind: 'agent' });
+    const workflowStepId = sessionStep.workflowStepId
+      ?? run.workflowDef?.steps.find(step => step.id === sessionStep.id)?.id
+      ?? [...(run.workflowDef?.steps ?? [])].reverse().find(step => stepKind(step) === 'agent')?.id;
+    if (workflowStepId) this.store.updateStep(runId, stepId, { workflowStepId });
     const prompt = opts.text?.trim() || 'Continue.';
     const images = opts.images ?? [];
     if (deferForCapacity) {
@@ -3536,6 +3549,9 @@ export class RunManager {
     // invisible to the enforcer forever. Best-effort; falls back to repoRoot.
     await rematerializeReclaimedWorktree(this.repoRoot, this.store, runId);
     const record = this.store.getRun(runId);
+    const continuedStage = record?.steps.find(step => step.id === stepId)?.workflowStepId;
+    const continuedIndex = record?.workflowDef?.steps.findIndex(step => step.id === continuedStage) ?? -1;
+    const hasWorkflowTail = continuedIndex >= 0 && continuedIndex < (record?.workflowDef?.steps.length ?? 0) - 1;
     // A provider/account switch cannot resume the old provider-owned session. Reconstruct the
     // portable context from Cezar's durable record + redacted event stream before this new turn's
     // user-message is appended. This works even when the interrupted agent never wrote HANDOFF.md.
@@ -3747,6 +3763,14 @@ export class RunManager {
           state.session?.end();
           return;
         }
+        if (hasWorkflowTail && sessionOpen && !ask && !monitoring && !dispatchTurn.overBudget && !dispatchTurn.rePrompted && !compacted) {
+          const closing = state.session;
+          const autoEnd = setTimeout(() => {
+            if (closing?.open) closing.end();
+          }, AUTO_END_DELAY_MS);
+          autoEnd.unref();
+          return;
+        }
         // Autonomous (#autonomous): never hand the ball back to the user. Nudge the agent to
         // keep going (bounded by MAX_AUTO_CONTINUES) instead of parking at `waiting`. Shared
         // with `runAgentStep`'s twin turn-end so the two cannot drift — including the shape:
@@ -3889,16 +3913,15 @@ export class RunManager {
     // (MCP servers, subagents) on Continue, restart recovery and the usage-limit auto-resume
     // — and dropping `bashAllowlist` WIDENED Bash from an allowlist to unrestricted
     // (`AgentRunSpec.allowedTools`, #430). Record steps share ids with `workflowDef.steps`;
-    // a synthetic `continue-N` owner and a fresh-session continuation (backend switch — no
-    // owning session) both extend the run's tail, so they resolve from the definition's last
-    // agent step. A legacy record without `workflowDef` (#367), or a session no step owns,
-    // keeps today's defaults.
+    // New continuations persist workflowStepId independently from session affinity. Legacy
+    // synthetic steps without lineage retain the last-agent fallback.
     const defSteps = record?.workflowDef?.steps;
-    const toolsStep =
-      defSteps === undefined || (sessionId !== undefined && owningStep === undefined)
+    const continuationStage = record?.steps.find(step => step.id === stepId)?.workflowStepId;
+    const toolsStep = defSteps?.find(step => step.id === continuationStage)
+      ?? (defSteps === undefined || (sessionId !== undefined && owningStep === undefined)
         ? undefined
-        : defSteps.find((s) => s.id === owningStep?.id)
-          ?? [...defSteps].reverse().find((s) => stepKind(s) === 'agent');
+        : defSteps.find(step => step.id === owningStep?.id)
+          ?? [...defSteps].reverse().find(step => stepKind(step) === 'agent'));
     // The temp-directory preflight (#785) rides along with the account resolution: a resumed
     // turn hits the same broken `/tmp` a fresh one would, and an agent whose shell silently
     // returns nothing is worse than a turn that refuses to start and says why.
@@ -3967,7 +3990,7 @@ export class RunManager {
         model: continueModel,
         sessionId: spawnSessionId,
         resume: sessionId !== undefined,
-        timeoutMs: 0,
+        timeoutMs: hasWorkflowTail ? undefined : 0,
       },
       onEvent,
       { onUiEvent: (event) => this.handleRunnerUiEvent(runId, state, sink, event) },
@@ -3991,7 +4014,7 @@ export class RunManager {
       } else if (state.askPark === 'waiting' && this.active.get(runId) === state) {
         const message =
           'the session closed before the question was answered — continue to answer it, ' +
-          'but the remaining workflow steps will not resume automatically';
+          'then the remaining workflow stages will resume after a successful answer';
         const failedAt = finishedAt();
         this.store.updateStep(runId, stepId, { status: 'failed', error: message, finishedAt: failedAt });
         this.store.updateRun(runId, {
@@ -4016,8 +4039,35 @@ export class RunManager {
         });
         this.store.appendEvent(runId, { type: 'lifecycle', message: `run stopped — ${message}` });
       } else {
+        if (this.active.get(runId) !== state || state.cancelled) return;
         this.store.updateStep(runId, stepId, { status: 'done', finishedAt: finishedAt() });
         this.store.appendEvent(runId, { type: 'step-end', stepId, status: 'done' });
+        const workflow = record?.workflowDef;
+        const resumedIndex = workflow?.steps.findIndex(step => step.id === toolsStep?.id) ?? -1;
+        if (workflow && resumedIndex >= 0 && state.askPark !== 'abandoned') {
+          // A revised stage invalidates every later check/review. Reuse the normal loop,
+          // including bounded repair retries, rather than declaring the session a verified run.
+          this.recordUsagePeaks(runId, state);
+          this.clearIdleTimer(state);
+          this.clearMonitoringWakeTimer(state, runId);
+          this.waiting.delete(runId);
+          this.leaveMonitoring(runId);
+          state.session = undefined;
+          state.currentStepId = undefined;
+          state.interrupt = () => undefined;
+          this.store.updateStep(runId, workflow.steps[resumedIndex]!.id, { status: 'done', error: undefined, finishedAt: finishedAt() });
+          for (const step of workflow.steps.slice(resumedIndex + 1)) {
+            this.store.addStep(runId, { id: step.id, name: step.name ?? step.id, kind: stepKind(step) });
+            this.store.updateStep(runId, step.id, { status: 'pending', error: undefined, finishedAt: undefined });
+          }
+          const input = this.hydrateQueuedInput(runId, {
+            task: record!.task, runner: record!.runner, model: record!.model,
+            autonomous: record!.autonomous, generateFollowups: record!.generateFollowups,
+          });
+          await this.runWorkflowSteps(runId, state, workflow, input, state.skills ?? [],
+            continueBackend, record?.systemPrompt, resumedIndex + 1);
+          return;
+        }
         await this.settleSuccess(runId);
         appendHandoffHeartbeat(this.dataDir, runId, `step "${stepId}" complete — status=done`);
       }
@@ -4223,10 +4273,6 @@ export class RunManager {
     // twin is in `runContinuation`.
     this.prepareDispatchSession(runId, state);
     this.prepareAutomationsSession(state);
-    const retriesUsed = new Map<string, number>();
-    let checkFailure: string | null = null;
-    let runError: string | null = null;
-    let idleFailed = false;
     // `startRun` already persisted the task's attachments so a queued bubble can render them
     // (#612). Reuse those files for the agent-facing path note instead of minting
     // duplicate pasted files when execution finally begins.
@@ -4236,7 +4282,7 @@ export class RunManager {
     // note that covered the initial prompt alone would hand it a task about a file it was never
     // told the path of (#950).
     const startRecord = this.store.getRun(runId);
-    let startAttachments: PersistedAttachment[] = [
+    const startAttachments: PersistedAttachment[] = [
       ...(startRecord?.taskImages ?? []),
       ...(startRecord?.queuedMessages ?? []).flatMap((m) => m.images ?? []),
     ]
@@ -4256,8 +4302,25 @@ export class RunManager {
     // result stays `undefined` rather than `[]`, so a task carrying only files hands the runner
     // seam exactly the shape a task carrying nothing always did.
     const startBlocks = contentBlocksOf([...(input.images ?? []), ...(input.stackedImages ?? [])]);
-    let startImages: ContentBlock[] | undefined = startBlocks.length ? startBlocks : undefined;
+    const startImages: ContentBlock[] | undefined = startBlocks.length ? startBlocks : undefined;
 
+    await this.runWorkflowSteps(runId, state, workflow, input, skills, taskBackend,
+      extraSystemPrompt, 0, startImages, startAttachments);
+  }
+
+  /** One workflow tail executor for initial runs, Continue and restart recovery. */
+  private async runWorkflowSteps(
+    runId: string, state: ActiveRun, workflow: WorkflowDef, input: StartRunInput,
+    skills: Skill[], taskBackend: RunnerId, extraSystemPrompt: string | undefined,
+    startIndex: number, startImages?: ContentBlock[], startAttachments: PersistedAttachment[] = [],
+  ): Promise<void> {
+    const emit = (event: { type: string; stepId?: string; [k: string]: unknown }) => {
+      if (this.active.get(runId) === state && !state.cancelled) this.store.appendEvent(runId, event);
+    };
+    const retriesUsed = new Map<string, number>();
+    let checkFailure: string | null = null;
+    let runError: string | null = null;
+    let idleFailed = false;
     const lastAgentIdx = findLastAgentStepIndex(workflow);
 
     if (state.cancelled) {
@@ -4265,7 +4328,7 @@ export class RunManager {
       return;
     }
 
-    let i = 0;
+    let i = startIndex;
     while (i < workflow.steps.length) {
       if (state.cancelled) break;
       const step = workflow.steps[i] as WorkflowStepDef;
@@ -4278,6 +4341,7 @@ export class RunManager {
         status: 'running',
         iterations: iteration,
         startedAt: new Date().toISOString(),
+        finishedAt: undefined,
         error: undefined,
       });
       emit({ type: 'step-start', stepId: step.id, name: step.name ?? step.id, kind, iteration });
@@ -4333,7 +4397,7 @@ export class RunManager {
         continue;
       }
 
-      const { ok, output, exitCode } = await this.runCheckStep(state, step, emit);
+      const { ok, output, exitCode } = await this.runCheckStep(state, step, emit, runId);
       if (state.cancelled) break;
       if (ok) {
         this.finishStep(runId, step.id, 'done', undefined, emit);
@@ -4344,8 +4408,13 @@ export class RunManager {
       // A failure the check itself says is not about the diff (`onFail.retryOn`)
       // ends the run here: looping back would spend a full agent attempt on a
       // cause that is not in the worktree, twice over.
-      if (step.onFail && !retryableExit(step.onFail.retryOn, exitCode)) {
-        const codes = (step.onFail.retryOn ?? []).join(', ');
+      if (exitCode < 0 || (step.onFail && !retryableExit(step.onFail.retryOn, exitCode))) {
+        if (exitCode < 0) {
+          this.finishStep(runId, step.id, 'failed', output, emit);
+          runError = `check "${step.id}" could not complete: ${output}`;
+          break;
+        }
+        const codes = (step.onFail?.retryOn ?? []).join(', ');
         emit({
           type: 'note',
           stepId: step.id,
@@ -4435,13 +4504,10 @@ export class RunManager {
           this.store.updateStep(runId, s.id, { status: 'failed', finishedAt });
         }
       }
-      // Say what Continue will and will not do. It reopens the session through
-      // `runContinuation`, so the question can still be answered — but that is a
-      // standalone continuation, not a re-entry into `execute`, so the steps this
-      // park never reached stay `pending` and nothing will run them automatically.
+      // Continue reopens this stage, then uses the shared workflow loop for its tail.
       const error =
         'the session closed before the question was answered — continue to answer it, ' +
-        'but the remaining workflow steps will not resume automatically';
+        'then the remaining workflow stages will resume after a successful answer';
       // `awaitingAnswerSince`: closing the session freed the process and the slot, but the
       // question is still the user's to answer, so the task keeps reading as "needs you".
       this.store.updateRun(runId, {
@@ -5678,44 +5744,29 @@ export class RunManager {
     }
   }
 
-  private runCheckStep(
+  private async runCheckStep(
     state: ActiveRun,
     step: WorkflowStepDef,
     emit: (event: { type: string; stepId?: string; [k: string]: unknown }) => void,
-  ): Promise<{ ok: boolean; output: string; exitCode: number }> {
+    runId?: string,
+  ): Promise<CheckResult> {
     const command = step.command as string;
     emit({ type: 'note', stepId: step.id, message: `$ ${command}` });
-    return new Promise((resolve) => {
-      // Check steps run in the same cwd as the agent steps — the worktree.
-      const child = spawn('bash', ['-lc', command], { cwd: state.cwd, env: process.env });
-      state.interrupt = () => child.kill('SIGTERM');
-
-      let output = '';
-      const collect = (chunk: Buffer) => {
-        if (output.length < CHECK_OUTPUT_CAP) {
-          output += chunk.toString('utf8');
-          if (output.length >= CHECK_OUTPUT_CAP) output += '\n… (output truncated)';
-        }
-      };
-      child.stdout.on('data', collect);
-      child.stderr.on('data', collect);
-      child.on('error', (err) => {
-        state.interrupt = () => undefined;
-        const message = `failed to spawn: ${err.message}`;
-        emit({ type: 'check-output', stepId: step.id, command, text: message, exitCode: -1 });
-        resolve({ ok: false, output: message, exitCode: -1 });
-      });
-      child.on('close', (code) => {
-        state.interrupt = () => undefined;
-        const trimmed = output.trim() || '(no output)';
-        // `code` is null when a signal killed the child; -1 then, the same value an
-        // unspawnable command reports, and one no `retryOn` list can name — neither
-        // is a verdict on the diff, so neither buys the agent another attempt.
-        const exitCode = code ?? -1;
-        emit({ type: 'check-output', stepId: step.id, command, text: trimmed, exitCode });
-        resolve({ ok: code === 0, output: trimmed, exitCode });
-      });
-    });
+    const check = startCheck(command, state.cwd);
+    state.check = check;
+    state.currentStepId = step.id;
+    state.interrupt = () => check.interrupt();
+    if (runId && check.pid !== undefined) registerRunProcess(runId, check.pid);
+    try {
+      const result = await check.result;
+      emit({ type: 'check-output', stepId: step.id, command, text: result.output, exitCode: result.exitCode });
+      return result;
+    } finally {
+      if (runId) this.recordUsagePeaks(runId, state);
+      state.check = undefined;
+      state.currentStepId = undefined;
+      state.interrupt = () => undefined;
+    }
   }
 
   private finishStep(
@@ -5733,6 +5784,12 @@ export class RunManager {
     emit({ type: 'step-end', stepId, status, ...(error ? { error } : {}) });
     appendHandoffHeartbeat(this.dataDir, runId, `step "${stepId}" complete — status=${status}`);
   }
+}
+
+/** Re-executed workflow stages are not appended, so array order alone is not recency. */
+function latestSessionStep(steps: readonly StepState[]): StepState | undefined {
+  return steps.filter(step => step.sessionId).reduce<StepState | undefined>((latest, step) =>
+    !latest || (step.startedAt ?? '') >= (latest.startedAt ?? '') ? step : latest, undefined);
 }
 
 function findLastAgentStepIndex(workflow: WorkflowDef): number {

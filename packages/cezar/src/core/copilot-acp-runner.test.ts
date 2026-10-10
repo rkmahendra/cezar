@@ -191,10 +191,13 @@ describe('CopilotAcpRunner — session lifecycle', () => {
   it('cancel settles the turn as cancelled and leaves a usable result', async () => {
     const c = collect();
     const session = new CopilotAcpRunner({ bin: MOCK }).startSession({ userPrompt: 'long job', cwd }, c.onEvent, {
-      onUiEvent: c.onUiEvent,
+      onUiEvent: event => {
+        c.onUiEvent(event);
+        // Cancel at the lifecycle boundary, not a later 10ms polling tick which can
+        // observe the tool only after this mock's 20ms turn already completed under load.
+        if (event.type === 'item.started' && event.item.kind === 'tool') session.interrupt();
+      },
     });
-    await waitFor(() => c.ui.some((e) => e.type === 'item.started' && e.item.kind === 'tool'));
-    session.interrupt();
     await session.result;
 
     const completed = c.ui.filter((e) => e.type === 'turn.completed');

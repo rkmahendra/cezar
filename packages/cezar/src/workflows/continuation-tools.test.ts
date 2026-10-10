@@ -294,9 +294,8 @@ describe('a resumed session keeps its workflow step tools', () => {
     await settled(id);
   });
 
-  it("a fresh-session continuation (backend switch) resolves the definition's LAST agent step", async () => {
-    // A session owned by another backend forces `resume: false` — `runContinuation` gets no
-    // sessionId, so there is no owning step to read; the run's tail is the documented fallback.
+  it('a backend switch preserves the original workflow stage instead of jumping to its tail', async () => {
+    // Session affinity changes, but workflow stage identity survives the fresh conversation.
     const id = terminalRun({
       def: CHAIN_DEF,
       steps: [{ id: 'implement', sessionId: 'sess-1', backend: 'codex' }],
@@ -312,8 +311,8 @@ describe('a resumed session keeps its workflow step tools', () => {
     // A fresh session is pinned to a NEW id (recorded on the step) — never the other backend's.
     expect(spec.sessionId).toBeDefined();
     expect(spec.sessionId).not.toBe('sess-1');
-    expect(spec.allowedTools).toEqual(TAIL_TOOLS);
-    expect(spec.bashAllowlist).toBeUndefined();
+    expect(spec.allowedTools).toEqual(TOOLS);
+    expect(spec.bashAllowlist).toEqual(BASH);
     expect(spec.userPrompt).toContain('You are continuing an existing Cezar task');
     expect(spec.userPrompt).toContain('Status: failed');
     expect(spec.userPrompt).toContain('Codex usage limit reached');

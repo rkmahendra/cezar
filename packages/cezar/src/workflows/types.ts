@@ -152,6 +152,7 @@ export function stepKind(step: WorkflowStepDef): 'agent' | 'check' {
  * Called for a check that already FAILED, so `0` never reaches it.
  */
 export function retryableExit(retryOn: number[] | undefined, exitCode: number): boolean {
+  if (exitCode <= 0) return false;
   if (!retryOn?.length) return true;
   return retryOn.includes(exitCode);
 }

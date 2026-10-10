@@ -139,13 +139,14 @@ test('chainStepNote labels a step by its name first, then its skill, then generi
   assert.ok(bare?.includes('this step'));
 });
 
-test('retryableExit treats no list and an empty list as "any failure retries"', () => {
+test('retryableExit treats no list and an empty list as any command failure, not infrastructure failure', () => {
   // Every workflow written before `retryOn` existed, and every GUI that
   // serializes "nothing selected" as `[]`, must keep the old loop.
   for (const list of [undefined, []]) {
     assert.equal(retryableExit(list, 1), true);
     assert.equal(retryableExit(list, 2), true);
-    assert.equal(retryableExit(list, -1), true);
+    assert.equal(retryableExit(list, -1), false);
+    assert.equal(retryableExit(list, 0), false);
   }
 });
 

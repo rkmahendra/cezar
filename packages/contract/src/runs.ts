@@ -93,6 +93,8 @@ export const stepStateSchema = z.object({
   error: z.string().optional(),
   /** Latest agent session id — `claude --resume <id>` and friends. */
   sessionId: z.string().optional(),
+  /** Original workflow stage continued by this synthetic session. */
+  workflowStepId: z.string().optional(),
   /** Backend that owns `sessionId`; absent on records written before backend affinity. */
   backend: runnerSchema.optional(),
   /** Agent account (spec 2026-07-29-agent-profiles) that owns `sessionId` — `default`, or a
