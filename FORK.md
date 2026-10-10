@@ -32,6 +32,12 @@ Jcode also receives private project MCP servers through ACP `session/new` and
 `session/load`, including Continue and resume fallback. HTTP/SSE transports follow
 the CLI's advertised capabilities. Wire behavior is mock-tested, not live-verified.
 
+The [2026-10-10 integration audit](docs/audits/2026-10-10-jcode-integration.md)
+records remaining defects and workflow opportunities. Its first follow-up contains
+ACP stream errors instead of crashing the host, stops on rejected explicit model
+selection, and preserves successful caller-requested session closure. These paths
+have fake-peer regression coverage, not a live-provider verification claim.
+
 ## Reinstall the running cezar from this checkout
 
 ```bash

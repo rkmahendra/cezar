@@ -62,6 +62,8 @@ export interface AcpClientOptions {
   onRequest?: (message: AcpMessage) => AcpRequestAnswer | Promise<AcpRequestAnswer>;
   /** A stdout line that is not a JSON object. Skipped either way; this only reports it. */
   onUnparseable?: (line: string) => void;
+  /** Fatal transport failure. Session owners must terminate their child, even between turns. */
+  onError?: (message: string) => void;
 }
 
 interface Pending {
@@ -77,10 +79,14 @@ export class AcpClient {
   private closedReason: string | null = null;
 
   constructor(
-    private readonly input: NodeJS.WritableStream & { destroyed?: boolean; writable?: boolean },
-    private readonly output: NodeJS.ReadableStream,
+    private readonly input: NodeJS.WritableStream & { destroyed?: boolean; writable?: boolean; writableEnded?: boolean },
+    private readonly output: NodeJS.ReadableStream & { destroy?: () => void },
     private readonly opts: AcpClientOptions = {},
-  ) {}
+  ) {
+    // Audit F01: write() reports EPIPE asynchronously, outside its caller's try/catch.
+    this.input.on('error', (error: Error) => this.transportFailed(error));
+    this.output.on('error', (error: Error) => this.transportFailed(error));
+  }
 
   /**
    * The read loop. Resolves when the agent's stdout ends — the agent exited or closed it — and
@@ -90,6 +96,8 @@ export class AcpClient {
   async run(): Promise<void> {
     try {
       for await (const line of readNdjson(this.output)) this.receive(line);
+    } catch (error) {
+      this.transportFailed(error);
     } finally {
       this.close('ACP agent closed its output');
     }
@@ -222,13 +230,26 @@ export class AcpClient {
   }
 
   private write(message: AcpMessage): void {
+    if (this.closed) return;
+    if (this.input.destroyed || this.input.writable === false || this.input.writableEnded) {
+      this.transportFailed(new Error('ACP input is not writable'));
+      return;
+    }
     this.opts.onFrame?.('out', message);
-    if (this.input.destroyed || this.input.writable === false) return;
     try {
       this.input.write(`${JSON.stringify(message)}\n`);
-    } catch {
-      // The read loop and the child's exit own settlement when stdin disappears.
+    } catch (error) {
+      this.transportFailed(error);
     }
+  }
+
+  private transportFailed(error: unknown): void {
+    if (this.closed) return;
+    const message = `ACP transport failed: ${error instanceof Error ? error.message : 'unknown stream error'}`;
+    this.close(message);
+    this.opts.onError?.(message);
+    // A broken stdin can leave stdout open forever. Release the reader as well as requests.
+    this.output.destroy?.();
   }
 }
 
