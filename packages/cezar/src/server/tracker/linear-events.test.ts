@@ -76,6 +76,13 @@ it('discovers archived issues and uses immutable creation time', async () => {
   expect(query).toContain('includeArchived: true');
   expect(page.complete).toBe(true);
 });
+it.each(['http://linear.app/team/issue/T-1', 'https://foreign.invalid/team/issue/T-1', 'javascript:alert(1)', 'https://user:password@linear.app/team/issue/T-1', 'https://linear.app:8443/team/issue/T-1', 'https://linear.app/team/settings'])('rejects noncanonical event URL %s before returning candidates or checkpoint', async url => {
+  const source = createLinearEventSource(association, async () => ({ issues: {
+    nodes: [{ ...issue, url, identifier: issue.key, team: { id: 'team' }, state: { name: 'Done' }, labels: { nodes: [], pageInfo: { hasNextPage: false } } }],
+    pageInfo: { hasNextPage: false, endCursor: null },
+  } }));
+  await expect(source.poll({ baselineAt: '2026-09-19T00:00:00Z', now: '2026-09-19T03:00:00Z', event: 'issue.opened', limit: 25, signal: new AbortController().signal })).rejects.toBeDefined();
+});
 it('restarts a rejected continuation once per poll without moving the watermark', async () => {
   let count = 0;
   const source = createLinearEventSource(association, async () => {

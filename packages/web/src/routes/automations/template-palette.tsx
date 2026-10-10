@@ -31,7 +31,7 @@ export const automationTemplatesQueryKey = (exclude: string | null) =>
  * templates, and — loaded only when the tab is opened — the other registered projects'
  * automations. "Use this" hands the whole definition to the form and the palette closes.
  */
-export function TemplatePalette({ onPick }: { onPick: (template: TemplatePick) => void }) {
+export function TemplatePalette({ onPick, githubAvailable = true }: { onPick: (template: TemplatePick) => void; githubAvailable?: boolean }) {
   const [tab, setTab] = useState<Tab>('builtin')
   const projectId = useActiveProjectId()
   const others = useQuery({
@@ -88,6 +88,8 @@ export function TemplatePalette({ onPick }: { onPick: (template: TemplatePick) =
                 size="sm"
                 className="mt-0.5 self-start"
                 aria-label={`Use this: ${item.name}`}
+                disabled={item.kind === 'github' && !githubAvailable}
+                title={item.kind === 'github' && !githubAvailable ? 'GitHub event automations are unavailable for this project' : undefined}
                 onClick={() => onPick(item)}
               >
                 Use this

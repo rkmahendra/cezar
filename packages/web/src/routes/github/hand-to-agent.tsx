@@ -10,7 +10,7 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { Link } from '@/lib/project-router'
 
 import { createRun, putUiState } from '@/api/client'
-import { queryKeys, useHealth, useUiState } from '@/api/queries'
+import { queryKeys, useHealth, useProjectForge, useUiState } from '@/api/queries'
 import type { GithubItem, Skill, WorkflowDef } from '@open-mercato/cezar-api-client'
 import { EnginePills, engineRunBody, useResolvedEngine, type EnginePick } from '@/components/engine-pills'
 import { WorkflowPicker, SkillsPicker } from '@/components/agent-task-pickers'
@@ -112,13 +112,15 @@ export function HandToAgent({
   // Follow-up prompt templates (#413): built-in unless the user has edited them in Settings →
   // Prompt templates (`ui-state.json`'s `promptTemplates`).
   const health = useHealth()
+  const forge = useProjectForge()
   const templates = useMemo(
     () =>
       availablePromptTemplates(
         normalizePromptTemplates(uiState.data?.promptTemplates),
         health.data?.capabilities,
+        forge?.kind,
       ),
-    [uiState.data?.promptTemplates, health.data?.capabilities],
+    [uiState.data?.promptTemplates, health.data?.capabilities, forge?.kind],
   )
   const insertPromptTemplate = (snippet: string) => {
     const el = promptRef.current

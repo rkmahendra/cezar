@@ -4,7 +4,7 @@ import { useRef, useState } from 'react'
 import { Link, useNavigate } from '@/lib/project-router'
 
 import { removeTodo, startTodo } from '@/api/client'
-import { queryKeys, useHealth, useRuns, useTodos, useUiState } from '@/api/queries'
+import { queryKeys, useHealth, useProjectForge, useRuns, useTodos, useUiState } from '@/api/queries'
 import type { TodoItem } from '@open-mercato/cezar-api-client'
 import { CenteredState } from '@/components/centered-state'
 import { EnginePills, engineBody, useResolvedEngine, useSeededEnginePick } from '@/components/engine-pills'
@@ -172,9 +172,11 @@ function TodoCard({
   const [notes, setNotes] = useState('')
   const notesRef = useRef<HTMLTextAreaElement>(null)
   const health = useHealth()
+  const forge = useProjectForge()
   const templates = availablePromptTemplates(
     normalizePromptTemplates(uiState.data?.promptTemplates),
     health.data?.capabilities,
+    forge?.kind,
   )
   const insertNotesTemplate = (snippet: string) => {
     const el = notesRef.current

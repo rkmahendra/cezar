@@ -257,8 +257,21 @@ steps:
 back, its failing output is appended to the retried agent's prompt so the next
 attempt can see what broke.
 
+Continue and restart recovery retain the original workflow stage, even when changing
+agent backends. Once that stage succeeds, later review/check steps run through the same
+workflow loop as an initial task. A failed verification stays failed; an agent finishing
+its revision does not bypass the declared checks. Legacy runs without a saved workflow
+remain standalone continuations. Explicit Finish on a parked question still stops there.
+
+Check commands retain the workflow working directory and login-shell behavior. They have
+a 30-minute wall-clock ceiling and bounded output. On POSIX, cancellation/timeout reaps
+the command's process group before releasing its execution slot. Spawn failures, signals
+and timeouts are infrastructure failures, not automatic code-repair attempts.
+See [workflow reliability audit](workflow-reliability-audit.md) for remaining factory gaps.
+
 `onFail.retryOn` narrows the loop to the exit codes that mean *the work is
-wrong*. Omitted, any non-zero code loops back — right for `npm test`, which
+wrong*. Omitted, any positive command exit code loops back; cezar's infrastructure
+failure sentinel (`-1`) never does. This is right for `npm test`, which
 exits 1 whether a test failed or the runner could not start. A richer check
 distinguishes the two: an `e2e` browser run exits 1 on a failed test, but 2 on a
 config or credential error and 3 on an engine failure, none of which the agent

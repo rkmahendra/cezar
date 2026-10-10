@@ -345,6 +345,7 @@ describe('GitLab draft MR publication', () => {
   ])('refuses mismatched or multiple origin push URLs before vendor calls: %s', async (remote) => {
     respond = (bin, args) => args[0] === 'remote' ? remote : standard(bin, args);
     expect(await createGitlabDriver(root, ref).createPR(input())).toMatchObject({ ok: false, error: expect.stringContaining('push URL does not match') });
+    expect(autosave).not.toHaveBeenCalled();
     expect(pushCalls()).toHaveLength(0);
     expect(apiCalls()).toHaveLength(0);
   });
@@ -352,6 +353,20 @@ describe('GitLab draft MR publication', () => {
   it.each([`https://user:secret@${ref.host}/platform/payments/service.git`, `ssh://git@${ref.host}:2222/platform/payments/service.git`])('accepts supported git remote syntax without exposing credentials', async (remote) => {
     respond = (bin, args) => args[0] === 'remote' ? remote : standard(bin, args);
     expect(await createGitlabDriver(root, ref).createPR(input())).toEqual({ ok: true, url: mr.web_url, dryRun: false });
+  });
+
+  it.each(['main', 'develop'])('refuses branch %s before staging or committing any work', async (branch) => {
+    respond = (bin, args) => args[0] === 'symbolic-ref' ? branch : standard(bin, args);
+    expect(await createGitlabDriver(root, ref).createPR(input())).toMatchObject({ ok: false, error: expect.stringContaining('target or default branch') });
+    expect(autosave).not.toHaveBeenCalled();
+    expect(pushCalls()).toHaveLength(0);
+    expect(postCalls()).toHaveLength(0);
+  });
+
+  it('refuses a conflicting existing MR target before autosave', async () => {
+    respond = (bin, args) => args[5]?.includes('source_branch=') ? [{ ...mr, target_branch: 'other' }] : standard(bin, args);
+    expect(await createGitlabDriver(root, ref).createPR(input())).toMatchObject({ ok: false, error: expect.stringContaining('different target branch') });
+    expect(autosave).not.toHaveBeenCalled();
   });
 
   it.each(['wrong-base', 'same-branch', 'default-branch', 'changed-branch', 'push-failed'])('blocks unsafe publication: %s', async (mode) => {
@@ -381,7 +396,9 @@ describe('GitLab draft MR publication', () => {
     };
     expect(await createGitlabDriver(root, ref).createPR(input())).toMatchObject({ ok: false });
     expect(pushCalls()).toHaveLength(0);
-    expect(apiCalls()).toHaveLength(0);
+    // Read-only preflight must now establish the safe target before autosave.
+    expect(postCalls()).toHaveLength(0);
+    expect(apiCalls().every(call => call[1].includes('GET'))).toBe(true);
   });
 
   it('refuses to create a duplicate when branch lookup truncates before this project', async () => {

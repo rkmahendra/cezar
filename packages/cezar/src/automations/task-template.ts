@@ -7,7 +7,7 @@ import type { RunManager, StartRunInput } from '../workflows/run.ts';
 import type { GithubCandidate } from './github-poller.ts';
 import type { ScheduleOccurrence } from './schedule-runner.ts';
 import type { TrackerAutomationCandidate } from './tracker-poller.ts';
-import type { AutomationDefinition, GithubAutomationDefinition, ScheduleAutomationDefinition, TrackerAutomationDefinition } from './types.ts';
+import { trackerAutomationIssue, type AutomationDefinition, type GithubAutomationDefinition, type ScheduleAutomationDefinition, type TrackerAutomationDefinition } from './types.ts';
 
 const GITHUB_PLACEHOLDERS = new Set([
   'github.kind', 'github.number', 'github.title', 'github.url', 'github.author',
@@ -229,6 +229,8 @@ export async function launchTrackerAutomationRun(options: {
   dispatchEnabled?: boolean;
 }): Promise<{ runId: string }> {
   const { definition, candidate } = options;
+  const issue = trackerAutomationIssue(definition);
+  if (issue) throw new Error(issue);
   const workflow = await resolveWorkflow(options.root, definition);
   const input = startInput(definition, renderTrackerTask(definition, candidate), options.dispatchEnabled ?? false);
   const runs = (definition.task.variants ?? 1) > 1

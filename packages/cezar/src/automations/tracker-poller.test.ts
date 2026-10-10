@@ -15,6 +15,12 @@ function driver(candidates: TrackerEventCandidate[]): TrackerDriver {
   return { association, listIssues: vi.fn(), searchItems: vi.fn(), getItem: vi.fn(), pollEvents: vi.fn(async () => ({ candidates, checkpoint: 'opaque', complete: false })) };
 }
 describe('TrackerPoller event facade', () => {
+  it.each(['status', 'authors', 'assignees', 'allLabels', 'anyLabels', 'excludeLabels', 'reviewers', 'changedLabels', 'unknown'])('refuses persisted ignored filter %s before polling', async key => {
+    const source = driver([event]);
+    const configured = { ...definition, filters: { ...definition.filters, [key]: key === 'status' ? 'To Do' : ['required'] } };
+    await expect(new TrackerPoller().poll(source, configured, { baselineAt: definition.createdAt })).rejects.toThrow('trackerTrigger');
+    expect(source.pollEvents).not.toHaveBeenCalled();
+  });
   it('matches the historical target ID even if current issue status differs', async () => {
     const source = driver([event, { ...event, eventId: 'history:2', change: { fromId: 'todo', toId: 'progress' } }]);
     const result = await new TrackerPoller().poll(source, definition, { baselineAt: definition.createdAt });

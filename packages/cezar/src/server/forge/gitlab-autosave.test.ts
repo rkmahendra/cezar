@@ -74,4 +74,15 @@ describe('GitLab final autosave with real git', () => {
     expect((await git(['log', '-1', '--format=%s'])).stdout.trim()).toBe('initial');
     expect(await readFile(join(root, 'task.txt'), 'utf8')).toBe('do not publish\n');
   });
+
+  it('leaves the target branch, index and dirty work untouched even in dry-run', async () => {
+    await writeFile(join(root, 'task.txt'), 'do not commit\n');
+    const request = input();
+    request.run.baseBranch = 'feat/current';
+    const before = (await git(['status', '--porcelain'])).stdout;
+    expect(await driver().createPR(request)).toMatchObject({ ok: false, error: expect.stringContaining('target or default branch') });
+    expect((await git(['log', '-1', '--format=%s'])).stdout.trim()).toBe('initial');
+    expect((await git(['status', '--porcelain'])).stdout).toBe(before);
+    expect(await readFile(join(root, 'task.txt'), 'utf8')).toBe('do not commit\n');
+  });
 });

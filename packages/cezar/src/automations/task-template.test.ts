@@ -212,7 +212,7 @@ describe('scheduled automation task templates (spec 2026-09-14)', () => {
 describe('tracker automation task templates (2026-09-19)', () => {
   const trackerDefinition: TrackerAutomationDefinition = {
     id: 'todo', revision: 1, name: 'Watch To Do', enabled: true, kind: 'tracker', intervalSeconds: 300,
-    filters: { status: 'To Do', lookbackDays: 7, maxRecords: 25 },
+    filters: { lookbackDays: 7, maxRecords: 25 },
     trackerTrigger: { events: ['issue.status_changed'], association: { kind: 'jira', source: { id: 'source', webUrl: 'https://example.atlassian.net' }, externalId: 'ABC', externalName: 'ABC' } },
     task: { prompt: 'Work on {{tracker.key}}: {{tracker.title}} ({{tracker.status}}) at {{tracker.url}}' },
     createdAt: '2026-09-19T00:00:00.000Z', updatedAt: '2026-09-19T00:00:00.000Z',
@@ -282,5 +282,13 @@ describe('tracker automation task templates (2026-09-19)', () => {
       expect(RunStore.open(join(root, '.ai/cezar')).getRun(launched.runId)?.automationTracker)
         .toEqual(store.getRun(launched.runId)?.automationTracker);
     } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
+  it('refuses unsupported persisted tracker filters before creating a run', async () => {
+    await expect(launchTrackerAutomationRun({
+      root: '/unused', manager: {} as RunManager, store: {} as RunStore,
+      definition: { ...trackerDefinition, filters: { ...trackerDefinition.filters, status: 'To Do' } },
+      candidate: trackerCandidate, receiptId: 'receipt',
+    })).rejects.toThrow('trackerTrigger');
   });
 });
