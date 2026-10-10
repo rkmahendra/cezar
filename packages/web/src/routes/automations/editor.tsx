@@ -5,7 +5,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 
 import type { AutomationListEntry, AutomationsResponse } from '@open-mercato/cezar-api-client'
 import { ApiError, createAutomation, updateAutomation } from '@/api/client'
-import { useHealth, useRepo, useSkills, useUiState, useWorkflows } from '@/api/queries'
+import { useHealth, useProjectForge, useRepo, useSkills, useUiState, useWorkflows } from '@/api/queries'
 import { Chip } from '@/components/chip'
 import { Pill } from '@/components/pill'
 import { Button } from '@/components/ui/button'
@@ -78,6 +78,7 @@ export function AutomationEditor({ data, automation, actions, onBack, onSaved, o
   const queryClient = useQueryClient()
   const navigate = useNavigate()
   const health = useHealth()
+  const forge = useProjectForge()
   const uiState = useUiState()
   const workflows = useWorkflows()
   const skills = useSkills()
@@ -105,11 +106,11 @@ export function AutomationEditor({ data, automation, actions, onBack, onSaved, o
 
   const patch = (next: Partial<EditorDraft>) => setDraft((current) => ({ ...current, ...next }))
   const timeZone = data?.timeZone ?? 'UTC'
-  const githubAvailable = data?.available !== false
+  const githubAvailable = data?.available === true
   const dispatchAvailable = health.data?.capabilities.dispatch === true
   const promptTemplates = useMemo(
-    () => availablePromptTemplates(normalizePromptTemplates(uiState.data?.promptTemplates), health.data?.capabilities),
-    [uiState.data?.promptTemplates, health.data?.capabilities],
+    () => availablePromptTemplates(normalizePromptTemplates(uiState.data?.promptTemplates), health.data?.capabilities, forge?.kind),
+    [uiState.data?.promptTemplates, health.data?.capabilities, forge?.kind],
   )
   const workflowList = workflows.data?.workflows ?? []
   const workflowNames = workflowList.map((workflow) => workflow.name)
@@ -120,6 +121,7 @@ export function AutomationEditor({ data, automation, actions, onBack, onSaved, o
   const baseBranch = repo.data?.baseBranch ?? repo.data?.info?.branch ?? undefined
   const cli = useMemo(() => cliDefinitionOf(draft), [draft])
   const canSave = draft.name.trim().length > 0 && draft.prompt.trim().length > 0 && !saving && (draft.kind !== 'tracker' || trackerValid)
+    && (draft.kind !== 'github' || githubAvailable || (!!automation && !draft.enabled))
 
   const insertPrompt = (snippet: string) => {
     const box = promptRef.current
@@ -134,6 +136,7 @@ export function AutomationEditor({ data, automation, actions, onBack, onSaved, o
   }
 
   const save = async () => {
+    if (!canSave) return
     setSaving(true)
     setError(null)
     setConflict(false)
@@ -198,7 +201,9 @@ export function AutomationEditor({ data, automation, actions, onBack, onSaved, o
 
             {showTemplates && !automation ? (
               <TemplatePalette
+                githubAvailable={githubAvailable}
                 onPick={(template) => {
+                  if (template.kind === 'github' && !githubAvailable) return
                   // A template from another project may name a workflow this repo does not
                   // have; only a workflow the cockpit lists survives, else the default applies.
                   const workflow = template.workflow && workflowNames.includes(template.workflow) ? template.workflow : undefined

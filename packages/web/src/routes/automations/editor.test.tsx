@@ -276,6 +276,17 @@ describe('AutomationEditor — new', () => {
     expect((screen.getByRole('button', { name: 'On a schedule' }) as HTMLButtonElement).disabled).toBe(false)
   })
 
+  it('does not let a GitHub preset bypass unavailable forge selection', async () => {
+    const sent = stubFetch()
+    renderEditor({ data: { ...DATA, available: false, reason: 'no GitHub remote' } })
+    const preset = screen.getByRole('button', { name: 'Use this: Triage new issues' })
+    expect((preset as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.click(preset)
+    expect((screen.getByLabelText('Name') as HTMLInputElement).value).toBe('')
+    expect(sent.some(request => request.method === 'POST' && request.path === '/api/v1/automations')).toBe(false)
+    expect((screen.getByRole('button', { name: 'Use this: Nightly dependency bump' }) as HTMLButtonElement).disabled).toBe(false)
+  })
+
   it('shows a 400 under the section it names and a generic failure at the top', async () => {
     stubFetch({ 'POST /api/v1/automations': () => jsonResponse({ error: 'schedule: hour must be at most 23' }, 400) })
     renderEditor()

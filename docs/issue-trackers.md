@@ -236,6 +236,11 @@ inaccessible tasks. Previously saved selections remain visible and removable eve
 missing from loaded tasks or when loading fails. Changing project/source/connection isolates
 the suggestion cache. This works for Jira and Linear without label-history support.
 API/JSON uses `trackerTrigger.requiredLabels`; CLI uses repeatable `--require-label bug`.
+Tracker `filters` accepts only the polling bounds `lookbackDays` and `maxRecords`.
+GitHub-only author/assignee/label filters and legacy `filters.status` are rejected rather
+than silently ignored. Old definitions remain readable, but polling, enabling and retrying
+stop with an explanation until unsupported filters are removed through the editor or API.
+Use `trackerTrigger` for advertised events, destination status IDs and required labels.
 The filter uses labels in the polled issue snapshot, not their historical state at creation.
 Adding a label is not a trigger and does not scan old skipped tasks; a recent creation can
 still be reconsidered during the existing two-minute overlap. Preview uses the same filter.

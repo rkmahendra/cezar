@@ -26,6 +26,7 @@ import {
   isGithubAutomation,
   isTrackerAutomation,
   isScheduleAutomation,
+  trackerAutomationIssue,
   type AutomationDefinition,
 } from '../automations/types.ts';
 import { trackerTriggerSchema, trackerAutomationOptionsSchema, trackerAutomationOptionsQuerySchema, automationScheduleSchema, localTimeZone, nextOccurrence } from '@open-mercato/cezar-contract';
@@ -430,10 +431,7 @@ type AutomationEditableBody = z.infer<typeof automationEditableSchema>;
  * schedule and carries no GitHub filter.
  */
 function automationKindIssue(body: AutomationEditableBody, kind: 'github' | 'schedule' | 'tracker'): string | null {
-  // Tracker automations have no create/edit route yet (2026-09-19): hand-authored into
-  // `automations.json` only. Refuse explicitly rather than misapplying the GitHub filter rules
-  // below to one that reaches this far (e.g. a PUT that omits `kind` on an existing tracker row).
-  if (kind === 'tracker') return body.trackerTrigger ? null : 'Choose an event to finish configuring this automation';
+  if (kind === 'tracker') return trackerAutomationIssue(body);
   if (kind === 'schedule') {
     if (!body.schedule) return 'a scheduled automation needs a schedule';
     if (body.events || body.filters || body.intervalSeconds !== undefined) return 'a scheduled automation has no GitHub filter';
@@ -3791,6 +3789,8 @@ export function createApp(deps: ServerDeps) {
       const current = store.get(c.req.param('id'));
       if (!current) return c.json({ error: 'not found' }, 404);
       if (current.kind === 'tracker') {
+        const invalid = trackerAutomationIssue(current);
+        if (invalid) return c.json({ error: invalid }, 400);
         const issue = await trackerTriggerIssue(c.get('project'), current.trackerTrigger);
         if (issue) return c.json({ error: issue }, 400);
       }
@@ -3913,6 +3913,8 @@ export function createApp(deps: ServerDeps) {
         return c.json({ receiptId: receipt.receiptId, runId: outcome.runId }, 202);
       }
       if (isTrackerAutomation(definition)) {
+        const invalid = trackerAutomationIssue(definition);
+        if (invalid) return c.json({ error: invalid }, 409);
         const candidate = receipt.trackerCandidate;
         if (!candidate?.association || !candidate.event || !candidate.issueId || !candidate.change) return c.json({ error: 'Receipt predates event context and cannot be retried safely' }, 409);
         if (receipt.revision !== definition.revision) return c.json({ error: 'Automation changed since this event; retry is no longer safe' }, 409);

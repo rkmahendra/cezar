@@ -2496,6 +2496,15 @@ describe('the follow-up prompt template menu (#413)', () => {
   const option = (id: string) =>
     document.querySelector<HTMLElement>(`[data-slot="prompt-template-option"][data-template="${id}"]`)
 
+  it.each(['github', 'gitlab'])('gates the stock gh review command in a %s composer', async kind => {
+    const base = health(['claude']);
+    stubFetch({ 'GET /api/v1/health': () => jsonResponse({ ...base, forge: { kind, available: true }, capabilities: { ...base.capabilities, dispatch: true } }) })
+    await openDetail()
+    await openTemplateMenu()
+    expect(option('add-tests')).not.toBeNull()
+    expect(option('review-open-prs') !== null).toBe(kind === 'github')
+  })
+
   /**
    * Click a mounted template option until the select provably lands. A re-render (the
    * ui-state query resolving, a queries invalidation) can replace the option node between

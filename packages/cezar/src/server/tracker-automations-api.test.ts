@@ -32,6 +32,33 @@ beforeEach(() => {
   app = createApp({ repoRoot: root, store, automationStore: automations, manager: {} as never, version: 'test' });
 });
 afterEach(() => { store.flush(); rmSync(root, { recursive: true, force: true }); });
+it.each(['status', 'authors', 'assignees', 'allLabels', 'anyLabels', 'excludeLabels', 'reviewers', 'changedLabels', 'unknown'])('rejects unsupported tracker filter %s on create, update and legacy enable', async key => {
+  const filters = { [key]: key === 'status' ? 'To Do' : ['required'] };
+  const invalid = { ...input, filters };
+  const created = await apiRequest(app, '/api/v1/automations', body(invalid));
+  expect(created.status).toBe(400);
+  expect(await created.json()).toMatchObject({ error: expect.stringContaining('trackerTrigger') });
+  expect(automations.list()).toHaveLength(0);
+  const valid = automations.create(input);
+  const updated = await apiRequest(app, `/api/v1/automations/${valid.id}`, body({ ...invalid, expectedRevision: valid.revision }, 'PUT'));
+  expect(updated.status).toBe(400);
+  expect(automations.get(valid.id)?.revision).toBe(valid.revision);
+  // Storage remains lossless for old definitions, but they cannot launch with ignored filters.
+  const legacy = automations.create(invalid);
+  expect((await apiRequest(app, `/api/v1/automations/${legacy.id}/enable`, { method: 'POST' })).status).toBe(400);
+  expect(automations.get(legacy.id)?.enabled).toBe(false);
+  expect(automations.get(legacy.id)?.filters).toMatchObject(filters);
+  const candidate = { eventId: `legacy:${key}`, timestamp: new Date().toISOString(), tieBreaker: '1', provider: 'jira' as const, association, event: 'issue.status_changed' as const, issueId: '123', key: 'P-1', title: 'test', url: 'https://example.atlassian.net/browse/P-1', status: 'Done', labels: [], change: { toId: 'todo' } };
+  const receipt = automations.reserveReceipt({ automationId: legacy.id, revision: legacy.revision, eventId: candidate.eventId, trackerCandidate: candidate })!;
+  automations.appendReceipt({ ...receipt, status: 'launch-error' });
+  expect((await apiRequest(app, `/api/v1/automation-log/${receipt.receiptId}/retry`, { method: 'POST' })).status).toBe(409);
+  expect(automations.latestReceipts().get(receipt.receiptKey)?.status).toBe('launch-error');
+  expect(mocks.launch).not.toHaveBeenCalled();
+});
+it.each([{ events: ['issue.opened'] }, { schedule: { type: 'daily', hour: 4, minute: 0 } }])('rejects unrelated tracker trigger fields %j', async extra => {
+  expect((await apiRequest(app, '/api/v1/automations', body({ ...input, ...extra }))).status).toBe(400);
+  expect(automations.list()).toHaveLength(0);
+});
 it('creates paused, round trips status IDs, edits, enables and previews without a receipt', async () => {
   const created = await apiRequest(app, '/api/v1/automations', body(input));
   expect(created.status).toBe(201);

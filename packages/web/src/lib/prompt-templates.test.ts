@@ -359,6 +359,13 @@ describe('DEFAULT_PROMPT_TEMPLATES', () => {
 })
 
 describe('availablePromptTemplates', () => {
+  it('hides the stock GitHub review command on GitLab, preserving custom replacements', () => {
+    const caps = { dispatch: true, automations: true }
+    expect(availablePromptTemplates(DEFAULT_PROMPT_TEMPLATES, caps, 'gitlab').map(t => t.id)).not.toContain('review-open-prs')
+    expect(availablePromptTemplates(DEFAULT_PROMPT_TEMPLATES, caps, 'github').map(t => t.id)).toContain('review-open-prs')
+    const custom = { id: 'review-open-prs', label: 'Team review', text: 'Use our approved review workflow.' }
+    expect(availablePromptTemplates([custom], caps, 'gitlab')).toEqual([custom])
+  })
   const ids = (caps: { dispatch?: boolean; automations?: boolean } | undefined) =>
     availablePromptTemplates(DEFAULT_PROMPT_TEMPLATES, caps).map((t) => t.id)
 

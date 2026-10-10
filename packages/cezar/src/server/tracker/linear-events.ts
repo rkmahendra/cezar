@@ -9,6 +9,7 @@ import {
   type EventIssue,
 } from './event-scan.ts';
 import { TrackerRequestError } from './transport.ts';
+import { linearIssueUrlSchema } from './linear-url.ts';
 export const linearEventCapabilities: TrackerAutomationEvent[] = [
   'issue.opened',
 ];
@@ -139,7 +140,7 @@ export function createLinearEventSource(
                 id: z.string(),
                 identifier: z.string(),
                 title: z.string(),
-                url: z.url(),
+                url: linearIssueUrlSchema,
                 createdAt: z.iso.datetime({ offset: true }),
                 team: z.object({ id: z.string() }),
                 state: z.object({ name: z.string() }),

@@ -18,6 +18,7 @@ import {
   queryKeys,
   useConfig,
   useHealth,
+  useProjectForge,
   useProviderStatus,
   useProjects,
   useRepo,
@@ -126,6 +127,7 @@ export function NewTaskRoute() {
   const [deepLink] = useState(() => parseNewTaskParams(search))
 
   const health = useHealth()
+  const forge = useProjectForge()
   const workflows = useWorkflows()
   const skills = useSkills()
   const repo = useRepo()
@@ -208,8 +210,9 @@ export function NewTaskRoute() {
       availablePromptTemplates(
         normalizePromptTemplates(uiState.data?.promptTemplates),
         health.data?.capabilities,
+        forge?.kind,
       ),
-    [uiState.data?.promptTemplates, health.data?.capabilities],
+    [uiState.data?.promptTemplates, health.data?.capabilities, forge?.kind],
   )
   const autoText = autoApplyText(templates, source?.source === 'skill' ? [source.ref] : [])
   const draftTextRef = useRef(draft.text)

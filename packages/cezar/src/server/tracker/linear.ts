@@ -9,6 +9,7 @@ import type { TrackerProvider, TrackerDriver } from './types.ts';
 import { TrackerHttp, TrackerRequestError, ResultCache, requestFailure, runOperation } from './transport.ts';
 import { encodeCursor, decodeCursor } from './cursor.ts';
 import { descriptionBody } from './adf.ts';
+import { linearIssueUrlSchema } from './linear-url.ts';
 
 const endpoint = 'https://api.linear.app/graphql';
 const sourceQuery = 'query TrackerSource { organization { id urlKey } }';
@@ -22,7 +23,7 @@ const pageSchema = z.object({ hasNextPage: z.boolean(), endCursor: z.string().mi
 const itemSchema = z.object({
   identifier: z.string().regex(/^[a-zA-Z][a-zA-Z0-9_]*-\d+$/),
   title: z.string(), description: z.string().nullable(),
-  url: z.url(), createdAt: z.iso.datetime({ offset: true }), updatedAt: z.iso.datetime({ offset: true }),
+  url: linearIssueUrlSchema, createdAt: z.iso.datetime({ offset: true }), updatedAt: z.iso.datetime({ offset: true }),
   creator: z.object({ name: z.string() }).nullable(), team: z.object({ id: z.string().min(1) }),
   state: z.object({ name: z.string(), type: z.string() }),
   labels: z.object({ nodes: z.array(z.object({ name: z.string() })), pageInfo: z.object({ hasNextPage: z.boolean() }) }),
@@ -113,8 +114,6 @@ TrackerProvider {
   };
   const mapItem = (raw: z.infer<typeof itemSchema>, association: TrackerAssociation, cap: number): TrackerItem => {
     if (raw.team.id !== association.externalId) throw new TrackerRequestError('not_found', 'The requested Linear issue was not found in this team.');
-    const url = new URL(raw.url);
-    if (url.protocol !== 'https:' || url.hostname !== 'linear.app' || url.username || url.password || url.port || !url.pathname.includes('/issue/')) return invalid();
     if (raw.labels.pageInfo.hasNextPage) return invalid();
     return {
       kind: 'issue', id: raw.identifier, title: raw.title, author: raw.creator?.name ?? '',

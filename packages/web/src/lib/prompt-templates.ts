@@ -123,11 +123,15 @@ export const AUTOMATIONS_TEMPLATE_IDS: ReadonlySet<string> = new Set(['create-au
 export function availablePromptTemplates(
   templates: readonly PromptTemplate[],
   capabilities: { dispatch?: boolean; automations?: boolean } | undefined,
+  forge?: 'github' | 'gitlab',
 ): PromptTemplate[] {
   return templates.filter(
     (template) =>
       (capabilities?.dispatch === true || !DISPATCH_TEMPLATE_IDS.has(template.id))
-      && (capabilities?.automations === true || !AUTOMATIONS_TEMPLATE_IDS.has(template.id)),
+      && (capabilities?.automations === true || !AUTOMATIONS_TEMPLATE_IDS.has(template.id))
+      // Hide only the stock command, never silently alter a user's replacement playbook.
+      && !(forge === 'gitlab' && template.id === 'review-open-prs'
+        && template.text === DEFAULT_PROMPT_TEMPLATES.find(item => item.id === template.id)?.text),
   )
 }
 

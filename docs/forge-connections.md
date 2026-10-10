@@ -40,6 +40,13 @@ its URL. Existing GitHub tasks retain **Draft PR** / **Create PR**. Publication 
 merge. Errors leave the run available for retry. For GitLab, conversation, detailed
 pipeline checks, changed-file review and merging remain in GitLab's own UI.
 
+GitLab publication checks the intended remote, target/default branch and existing MR target
+before autosaving changes. A rejected preflight does not stage or commit work. Valid publication
+still autosaves before pushing and rechecks the branch and push remote after autosave.
+Dry-run keeps its local autosave but never requires a vendor connection or pushes.
+GitHub event presets are disabled when unavailable in the automation editor. The stock
+`gh`-based **Review open PRs** prompt is hidden on GitLab; custom replacements stay unchanged.
+
 The existing `/api/v1/github` API and `/github` page paths are retained for compatibility,
 but their list/search/publication operations select the repository's forge. GitLab rows
 retain the shared `kind: "pr"` wire value, representing merge requests, with GitLab URLs.

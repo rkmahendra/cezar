@@ -34,8 +34,7 @@ export const automationFiltersSchema = z
     reviewers: stringList,
     lookbackDays: z.number().int().min(1).max(90).default(7),
     maxRecords: z.number().int().min(1).max(100).default(25),
-    /** Tracker kind only: the vendor workflow status a matching item must currently be in
-     *  (e.g. "To Do"). Case-insensitive match against the item's own `status` field. */
+    /** Legacy snapshot configuration, retained for lossless reads only. Event execution refuses it. */
     status: z.string().trim().min(1).max(200).optional(),
   })
   .passthrough();
@@ -292,6 +291,16 @@ export type AutomationDefinition = z.infer<typeof automationDefinitionSchema>;
 export type AutomationRuntimeState = z.infer<typeof automationRuntimeStateSchema>;
 export type AutomationReceipt = z.infer<typeof automationReceiptSchema>;
 export type AutomationLogRecord = z.infer<typeof automationLogRecordSchema>;
+
+/** Keep legacy files readable, but never execute a filter this version cannot honor. */
+export function trackerAutomationIssue(input: Pick<AutomationDefinition, 'trackerTrigger' | 'filters' | 'events' | 'schedule'>): string | null {
+  if (!input.trackerTrigger) return 'Choose an event to finish configuring this automation';
+  if (input.events !== undefined || input.schedule !== undefined) return 'A tracker automation uses trackerTrigger, not GitHub events or a schedule';
+  if (Object.entries(input.filters ?? {}).some(([key, value]) => value !== undefined && key !== 'lookbackDays' && key !== 'maxRecords')) {
+    return 'Tracker filters support only lookbackDays and maxRecords; use trackerTrigger for event and label filters';
+  }
+  return null;
+}
 
 /**
  * The two kinds, narrowed (spec 2026-09-14-automations-redesign): the poller and the GitHub
