@@ -1,5 +1,20 @@
 # Jcode integration audit, 2026-10-10
 
+## Follow-up remediation
+
+User requested continuation after the audit. The follow-up patch addresses **F01, F02, F13 and F16**, not the entire backlog:
+
+- Shared ACP catches asynchronous stdin/stdout failures, rejects pending requests and closes its reader. Jcode and Copilot terminate the failed peer, including between turns. Discovery already handles rejected handshakes through its `finally` cleanup; its separate SIGTERM-only limitation F15 remains.
+- Explicit Jcode model selection failure stops before any task prompt, on fresh and resumed sessions.
+- Caller-requested EOF is recorded before exit, bootstrap/pump stop after close, and timeout/cancellation publish accurate terminal reasons. Unsolicited clean exit during a prompt remains an error.
+- Ten selected regression tests fail with source fixes stashed and pass with fixes restored. Regression coverage also includes a real fake child closing fd0, both shared-client runners, timeout, later-turn cancellation, queued follow-up close, model selection still pending, and unchanged private MCP behavior.
+
+Follow-up verification: typecheck passed, core unit tests **42/42**, build/check:pack passed, package tests **17/17**. Full Vitest hit the tool's 600-second command ceiling after 462 files completed without failures. An inventory-derived continuation ran the remaining **77 files / 1,434 tests**, all passing. Combined logs cover all **539 files**, with **9,134 passed and 3 intentionally skipped** tests. Final cancellation-order adjustment also passed the full 17-test Jcode runner suite separately. Logs use the `fix-` prefix in the local audit scratch directory below. This is complete split-run coverage, not a claimed clean exit from the timed-out command. No live-provider/browser QA or deployment performed.
+
+Own run history provides additional close-path evidence: task `7b566b27-b6ef-4187-af55-0830ef86fcd7`, continuation `continue-2`, recorded goal achieved at `2026-10-10T13:25:22.404Z`, then `jcode exited with code 0` at `.481Z` and failed. Earlier interruptions were provider HTTP 401 responses, not evidence for the pipe crash. No credentials or running service were changed.
+
+The remainder is the historical audit at the revision below. Its reproduced-defect scripts intentionally assert old behavior and must not all remain green after fixes.
+
 ## Verdict
 
 **Changes recommended before treating Jcode as fully reliable for unattended, mixed-backend workflows.** Core integration works, but an ACP pipe failure can crash its host, explicit model rejection falls back to an unchosen model, and several cross-layer lifecycle paths are incorrect.

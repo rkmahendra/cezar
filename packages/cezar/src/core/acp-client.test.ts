@@ -157,6 +157,35 @@ describe('AcpClient', () => {
     await loop;
   });
 
+  it.each(['input', 'output'] as const)('settles pending requests on an asynchronous %s error', async (side) => {
+    const p = peer();
+    const failures: string[] = [];
+    // Keep the pre-fix assertion failure inside this test rather than crashing the worker.
+    p.agentIn.on('error', () => {});
+    const client = new AcpClient(p.agentIn, p.agentOut, {
+      onError: (message) => failures.push(message),
+      onFrame: (d, m) => p.frames.push([d, m]),
+    });
+    const loop = client.run().catch((error: unknown) => error);
+    const result = client.initialize().catch((error: unknown) => error);
+    const stream = side === 'input' ? p.agentIn : p.agentOut;
+    stream.destroy(new Error('broken pipe'));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    try {
+      expect(client.closed).toBe(true);
+      expect(failures).toEqual(['ACP transport failed: broken pipe']);
+      expect(await result).toBeInstanceOf(Error);
+      const sent = p.frames.length;
+      client.cancel('closed');
+      expect(p.frames).toHaveLength(sent);
+      await expect(client.newSession('/repo')).rejects.toThrow('broken pipe');
+    } finally {
+      p.agentOut.end();
+      await loop;
+      await result;
+    }
+  });
+
   it('sends session/cancel as a notification (no id)', async () => {
     const p = peer();
     const client = new AcpClient(p.agentIn, p.agentOut);

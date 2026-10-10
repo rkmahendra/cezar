@@ -183,6 +183,11 @@ class CopilotAcpSession implements AgentSession {
       onFrame: (dir, frame) => this.onFrame(dir, frame),
       onRequest: (request) => this.onRequest(request),
       onUnparseable: (line) => this.emit({ type: 'note', message: `copilot: skipped unparseable ACP line: ${truncate(line, 200)}` }),
+      onError: (message) => {
+        if (this.isOpen) this.fail(message);
+        this.isOpen = false;
+        this.terminate(true);
+      },
     });
 
     if (this.limitMs > 0) {

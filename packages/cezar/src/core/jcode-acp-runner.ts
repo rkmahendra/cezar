@@ -111,12 +111,14 @@ class JcodeAcpSession implements AgentSession {
   private acpSessionId: string | undefined;
   private loadSupported = false;
   private imagesSupported = false;
+  private ready = false;
 
   private isOpen = true;
   private turnInFlight = false;
   private turnsCompleted = 0;
   private readonly queue: AcpContentBlock[][] = [];
   private terminatedByCezar = false;
+  private stopReason: 'end_turn' | 'cancelled' | undefined;
   private timedOut = false;
   private failed: string | null = null;
   private replayDone: (() => void) | null = null;
@@ -158,6 +160,11 @@ class JcodeAcpSession implements AgentSession {
       onFrame: (dir, frame) => this.onFrame(dir, frame),
       onRequest: (request) => this.onRequest(request),
       onUnparseable: (line) => this.emit({ type: 'note', message: `jcode: skipped unparseable ACP line: ${truncate(line, 200)}` }),
+      onError: (message) => {
+        if (this.isOpen) this.fail(message);
+        this.isOpen = false;
+        this.terminate(true);
+      },
     });
 
     if (this.limitMs > 0) {
@@ -190,12 +197,16 @@ class JcodeAcpSession implements AgentSession {
   end(): void {
     if (!this.isOpen) return;
     this.isOpen = false;
+    this.stopReason = 'end_turn';
+    // Audit F13: EOF is our stop too, even if the child exits before the signal watchdog.
+    this.terminatedByCezar = true;
     this.terminate(false);
   }
 
   interrupt(): void {
-    if (this.acpSessionId && this.turnInFlight) this.client.cancel(this.acpSessionId);
+    this.stopReason = 'cancelled';
     this.isOpen = false;
+    if (this.acpSessionId && this.turnInFlight) this.client.cancel(this.acpSessionId);
     this.terminate(true);
   }
 
@@ -209,7 +220,7 @@ class JcodeAcpSession implements AgentSession {
     } catch (error) {
       // An agent that went away mid-handshake is explained by its exit, read below — not by the
       // transport's "closed" rejection.
-      if (!this.spawnError && !this.client.closed) this.fail(error instanceof Error ? error.message : String(error));
+      if (this.isOpen && !this.spawnError && !this.client.closed) this.fail(error instanceof Error ? error.message : String(error));
       this.terminate(false);
     }
 
@@ -224,8 +235,9 @@ class JcodeAcpSession implements AgentSession {
     if (this.turnInFlight) {
       // The agent died with a prompt unanswered: the transport rejected it, the wire never will.
       this.turnInFlight = false;
-      if (this.timedOut) this.applyUi(abortAcpTurn(this.ui, jcodeDialect, 'timeout'));
-      else if (this.terminatedByCezar) this.applyUi(abortAcpTurn(this.ui, jcodeDialect, 'cancelled'));
+      if (this.failed) this.applyUi(abortAcpTurn(this.ui, jcodeDialect, 'error', this.failed));
+      else if (this.timedOut) this.applyUi(abortAcpTurn(this.ui, jcodeDialect, 'timeout'));
+      else if (this.stopReason) this.applyUi(abortAcpTurn(this.ui, jcodeDialect, this.stopReason));
       else {
         const reason = jcodeExitMessage(exitCode, this.stderrText());
         this.applyUi(abortAcpTurn(this.ui, jcodeDialect, 'error', reason));
@@ -242,6 +254,7 @@ class JcodeAcpSession implements AgentSession {
     if (this.timedOut) {
       const minutes = Math.round((this.limitMs / 60_000) * 10) / 10;
       this.emit({ type: 'error', message: `jcode timed out after ${minutes}m and was killed` });
+      this.opts.onUiEvent?.({ type: 'session.ended', reason: 'timeout' });
       this.emit({ type: 'done' });
       return summary();
     }
@@ -268,13 +281,14 @@ class JcodeAcpSession implements AgentSession {
     if (this.tokensUsed === 0 && this.turnsCompleted > 0) {
       this.emit({ type: 'note', message: 'token usage not reported by jcode' });
     }
-    this.opts.onUiEvent?.({ type: 'session.ended', reason: this.terminatedByCezar && this.turnsCompleted === 0 ? 'cancelled' : 'end_turn' });
+    this.opts.onUiEvent?.({ type: 'session.ended', reason: this.stopReason ?? 'end_turn' });
     this.emit({ type: 'done' });
     return summary();
   }
 
   private async bootstrap(): Promise<void> {
     const init = await this.client.initialize(HANDSHAKE_TIMEOUT_MS);
+    if (!this.isOpen) return;
     const caps = isRecord(init.agentCapabilities) ? init.agentCapabilities : {};
     this.loadSupported = caps.loadSession === true;
     this.imagesSupported = isRecord(caps.promptCapabilities) && caps.promptCapabilities.image === true;
@@ -305,6 +319,7 @@ class JcodeAcpSession implements AgentSession {
         this.emit({ type: 'note', message: 'jcode does not advertise session/load — starting a fresh session' });
       }
     }
+    if (!this.isOpen) return;
     if (!this.acpSessionId) {
       const created = await this.client.newSession(this.spec.cwd, HANDSHAKE_TIMEOUT_MS, mcpServers).catch((error: unknown) => {
         const message = error instanceof Error ? error.message : String(error);
@@ -314,15 +329,14 @@ class JcodeAcpSession implements AgentSession {
       if (!id) throw new Error('jcode answered session/new without a sessionId');
       this.acpSessionId = id;
     }
+    if (!this.isOpen) return;
     if (this.spec.model) {
       // jcode ignores `-m` in ACP mode, so new AND resumed sessions get the model this way.
       await this.client.setModel(this.acpSessionId, this.spec.model, HANDSHAKE_TIMEOUT_MS).catch((error: unknown) => {
-        this.emit({
-          type: 'note',
-          message: `jcode kept its own model: session/set_model failed (${error instanceof Error ? error.message : String(error)})`,
-        });
+        throw new Error(`jcode could not select requested model: ${error instanceof Error ? error.message : String(error)}`);
       });
     }
+    if (!this.isOpen) return;
     this.emit({ type: 'session', sessionId: this.acpSessionId });
 
     const first: ContentBlock[] = [
@@ -330,12 +344,13 @@ class JcodeAcpSession implements AgentSession {
       { type: 'text', text: prependSystemPrompt(this.spec.systemPrompt, this.spec.userPrompt) },
     ];
     this.queue.unshift(this.toAcp(first));
+    this.ready = true;
     this.pump();
   }
 
   /** Send the next queued prompt when no turn is running. */
   private pump(): void {
-    if (this.turnInFlight || !this.acpSessionId || this.queue.length === 0 || this.client.closed) return;
+    if (!this.ready || !this.isOpen || this.turnInFlight || !this.acpSessionId || this.queue.length === 0 || this.client.closed) return;
     const prompt = this.queue.shift()!;
     this.turnInFlight = true;
     this.client.prompt(this.acpSessionId, prompt).then(
