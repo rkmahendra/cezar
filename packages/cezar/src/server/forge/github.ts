@@ -2497,106 +2497,114 @@ function mockGithubComments(kind: 'issue' | 'pr'): ForgeCommentsData {
 }
 
 // ---- draft-PR creation (review gate, spec 009) ------------------------------
-// Final autosave-commit → `git push -u origin cez/<id8>` → `gh pr create
-// --draft`, all executed in the task worktree (gh picks the repo up from the
-// worktree's remote). Every failure maps to a one-line human error — the GUI
-// shows it as a toast plus the manual `git merge <branch>` fallback. Never throws.
+// Read-only destination/branch preflight, final autosave, explicit push, then
+// create/reuse a draft PR. Readback reconciles ambiguous create responses. Never merges.
 
 const PUSH_TIMEOUT_MS = 60_000;
 const PROGRESS_LINES_MAX = 10;
 
 export async function createDraftPr(input: DraftPrInput, intendedRef?: GithubRepoRef | null): Promise<DraftPrOutcome> {
+  try {
+    return await publishDraftPr(input, intendedRef);
+  } catch {
+    // Neither argv (prompt text) nor stderr (credential-bearing remote URLs) is safe to echo.
+    return { ok: false, error: 'GitHub publication could not be verified. Check repository access, target branch and existing pull requests before retrying.' };
+  }
+}
+
+async function publishDraftPr(input: DraftPrInput, intendedRef?: GithubRepoRef | null): Promise<DraftPrOutcome> {
   const { run } = input;
   const worktree = run.worktreePath;
-  const branch = run.branch;
-  if (!worktree || !branch) {
+  if (!worktree || !run.branch) {
     return { ok: false, error: 'this task has no worktree/branch to publish' };
   }
-
-  // Final autosave: the branch must hold everything before it leaves the box.
-  // This is the LAST flush — unlike the turn-end and run-finalize ones there is
-  // no later autosave to pick the work up, so a refusal (conflicted tree) or a
-  // failed commit has to stop the publish instead of silently opening a PR from
-  // a branch that is missing the run's final state.
-  const saved = await autosaveCommit(worktree, 'pre-PR');
-  if (saved === 'refused') {
-    return {
-      ok: false,
-      error: 'worktree has unresolved merge conflicts — resolve them, then publish again',
-    };
+  const head = await execTool(['symbolic-ref', '--quiet', '--short', 'HEAD'], worktree, 'git');
+  const branch = head.stdout.trim();
+  if (!head.ok || !branch || branch.startsWith('-') || branch.includes('@{')) {
+    return { ok: false, error: 'Check out a valid task branch before publishing. Detached HEAD cannot be published.' };
   }
-  if (saved === 'failed') {
-    return { ok: false, error: 'could not commit the final changes — check git status in the worktree' };
-  }
-
-  // DRY-RUN (CEZ_DRY_RUN=1): no push, no gh — simulate success with a fake PR
-  // URL so the whole review → PR flow is testable without GitHub.
-  if (process.env.CEZ_DRY_RUN === '1') {
-    return { ok: true, url: 'https://github.com/open-mercato/demo/pull/777', dryRun: true };
-  }
-
-  const remote = await execTool(['remote', 'get-url', 'origin'], worktree, 'git');
-  if (!remote.ok || !remote.stdout.trim()) {
-    return { ok: false, error: 'no git remote — add one (git remote add origin <url>) or merge the branch locally' };
-  }
-  const ref = parseRemote(remote.stdout);
-  if (!ref || ref.owner.includes('/') || forgeKindOfHost(ref.host) !== 'github') {
-    return { ok: false, error: 'origin is not a known GitHub host' };
-  }
-  if (intendedRef && (ref.host !== (intendedRef.host ?? 'github.com') || ref.owner !== intendedRef.owner || ref.repo !== intendedRef.repo)) {
-    return { ok: false, error: 'worktree origin no longer matches the intended GitHub repository' };
-  }
-  const pushUrls = await execTool(['remote', 'get-url', '--push', '--all', 'origin'], worktree, 'git');
-  if (!pushUrls.ok || !pushUrls.stdout.trim() || pushUrls.stdout.trim().split(/\r?\n/).some((value) => {
-    const pushRef = parseRemote(value);
-    return !pushRef || pushRef.host !== ref.host || pushRef.owner !== ref.owner || pushRef.repo !== ref.repo;
-  })) return { ok: false, error: 'origin push URL does not match the intended GitHub repository' };
-  const validBranch = await execTool(['check-ref-format', '--branch', branch], worktree, 'git');
-  if (!validBranch.ok || branch.startsWith('-')) return { ok: false, error: 'invalid task branch' };
-  const target: GithubTarget = { root: worktree, ...ref };
-
-  const push = await execTool(['push', '-u', 'origin', branch], worktree, 'git', PUSH_TIMEOUT_MS, target);
-  if (!push.ok) {
-    return { ok: false, error: `git push failed — ${tail(push.stderr) || 'unknown error'}` };
-  }
-
-  const body = buildPrBody(input.handoffText, run.task);
-  // Target the branch the worktree forked from (config `baseBranch`) — without
-  // --base, gh aims at the repo default (main) even when work started on
-  // develop. `origin/x` normalizes to `x`; a raw sha (detached-HEAD fork
-  // point) can't be a PR base, so gh falls back to the default branch.
-  const prBase = run.baseBranch?.replace(/^origin\//, '');
-  const baseArgs = prBase && !/^[0-9a-f]{7,40}$/i.test(prBase) ? ['--base', prBase] : [];
-  const pr = await execTool(
-    ['pr', 'create', '--draft', '--head', branch, ...baseArgs, '--title', run.title, '--body', body],
-    worktree,
-    'gh',
-    PUSH_TIMEOUT_MS,
-    target,
-  );
-  if (!pr.ok) {
-    if (pr.notFound) {
-      return { ok: false, error: 'gh not found — install the GitHub CLI and run `gh auth login`, or merge the branch locally' };
+  if (!(await execTool(['check-ref-format', '--branch', branch], worktree, 'git')).ok) return { ok: false, error: 'invalid task branch' };
+  const configured = run.baseBranch?.replace(/^origin\//, '');
+  if (branch === configured) return { ok: false, error: 'Cannot publish the target branch as a task pull request.' };
+  const dryRun = process.env.CEZ_DRY_RUN === '1';
+  let target: GithubTarget | undefined;
+  let base: string | undefined;
+  let existing: z.infer<typeof publicationPrSchema> | undefined;
+  let findExisting: (() => Promise<z.infer<typeof publicationPrSchema> | undefined>) | undefined;
+  let urlFor: ((number: number) => string) | undefined;
+  if (!dryRun) {
+    const remote = await execTool(['remote', 'get-url', 'origin'], worktree, 'git');
+    if (!remote.ok || !remote.stdout.trim()) {
+      return { ok: false, error: 'No origin remote. Configure the intended repository before publishing.' };
     }
-    const hint = /auth|log ?in|credential/i.test(pr.stderr) ? ' (try `gh auth login`)' : '';
-    return { ok: false, error: `gh pr create failed — ${tail(pr.stderr) || 'unknown error'}${hint}` };
+    const ref = parseRemote(remote.stdout);
+    if (!ref || ref.owner.includes('/') || forgeKindOfHost(ref.host) !== 'github') {
+      return { ok: false, error: 'origin is not a known GitHub host' };
+    }
+    if (intendedRef && (ref.host !== (intendedRef.host ?? 'github.com') || ref.owner !== intendedRef.owner || ref.repo !== intendedRef.repo)) {
+      return { ok: false, error: 'worktree origin no longer matches the intended GitHub repository' };
+    }
+    const pushUrls = await execTool(['remote', 'get-url', '--push', '--all', 'origin'], worktree, 'git');
+    const pushRef = parseRemote(pushUrls.stdout);
+    if (!pushUrls.ok || !pushRef || pushRef.host !== ref.host || pushRef.owner !== ref.owner || pushRef.repo !== ref.repo) {
+      return { ok: false, error: 'origin push URL does not match the intended GitHub repository' };
+    }
+    target = { root: worktree, ...ref };
+    const fullName = `${ref.owner}/${ref.repo}`;
+    const api = async (path: string): Promise<unknown> => {
+      const result = await execTool(['api', path], worktree, 'gh', 30_000, target);
+      if (!result.ok) throw new Error('GitHub repository lookup failed. Check CLI authentication and repository access.');
+      return JSON.parse(result.stdout);
+    };
+    const repo = z.object({ full_name: z.string(), default_branch: z.string().min(1) }).parse(await api(`repos/${fullName}`));
+    if (repo.full_name.toLowerCase() !== fullName.toLowerCase()) return { ok: false, error: 'GitHub returned a different repository.' };
+    base = configured && !/^[0-9a-f]{7,40}$/i.test(configured) ? configured : repo.default_branch;
+    if (base.startsWith('-') || !(await execTool(['check-ref-format', '--branch', base], worktree, 'git')).ok) return { ok: false, error: 'invalid target branch' };
+    // Preflight is read-only. In particular, never autosave on the default/base branch.
+    if (branch === base || branch === repo.default_branch) return { ok: false, error: 'Cannot publish the target or default branch as a task pull request.' };
+    findExisting = async () => {
+      const query = new URLSearchParams({ state: 'open', head: `${ref.owner}:${branch}`, per_page: '100', page: '1' });
+      const rows = z.array(publicationPrSchema).max(100).parse(await api(`repos/${fullName}/pulls?${query}`));
+      const matches = rows.filter((pr) => pr.state === 'open' && pr.head.ref === branch &&
+        pr.head.repo?.full_name.toLowerCase() === fullName.toLowerCase() && pr.base.repo.full_name.toLowerCase() === fullName.toLowerCase());
+      if (rows.length === 100 || matches.length > 1) throw new Error('Pull request lookup is ambiguous. Check existing pull requests before publishing.');
+      if (matches.some((pr) => pr.base.ref !== base)) throw new Error('This branch already has an open pull request with a different target branch.');
+      return matches[0];
+    };
+    existing = await findExisting();
+    urlFor = (number) => `https://${ref.host}/${fullName}/pull/${number}`;
   }
-
-  // gh prints the PR URL on stdout; some versions echo it to stderr instead.
-  const url = `${pr.stdout}\n${pr.stderr}`.match(/https:\/\/[^\s]+/g)?.find((candidate) => {
-    try {
-      const parsed = new URL(candidate);
-      return !parsed.username && !parsed.password && parsed.host === ref.host &&
-        parsed.pathname.startsWith(`/${ref.owner}/${ref.repo}/pull/`) &&
-        /^[1-9][0-9]*$/.test(parsed.pathname.slice(`/${ref.owner}/${ref.repo}/pull/`.length)) &&
-        !parsed.search && !parsed.hash;
-    } catch { return false; }
-  });
-  if (!url) {
-    return { ok: false, error: 'gh pr create returned no PR URL — check `gh pr list` manually' };
-  }
-  return { ok: true, url, dryRun: false };
+  const beforeSave = await execTool(['symbolic-ref', '--quiet', '--short', 'HEAD'], worktree, 'git');
+  if (!beforeSave.ok || beforeSave.stdout.trim() !== branch) return { ok: false, error: 'Worktree branch changed during publication. Try again.' };
+  const saved = await autosaveCommit(worktree, 'pre-PR');
+  if (saved === 'refused') return { ok: false, error: 'worktree has unresolved merge conflicts. Resolve them, then publish again.' };
+  if (saved === 'failed') return { ok: false, error: 'could not commit the final changes. Check git status in the worktree.' };
+  const status = await execTool(['status', '--porcelain'], worktree, 'git');
+  if (!status.ok || status.stdout.trim()) return { ok: false, error: 'Cannot verify a clean worktree after autosave. Check git status before publishing.' };
+  if (dryRun) return { ok: true, url: 'https://github.com/open-mercato/demo/pull/777', dryRun: true };
+  if (!target || !base || !findExisting || !urlFor) return { ok: false, error: 'GitHub publication target could not be resolved.' };
+  const current = await execTool(['symbolic-ref', '--quiet', '--short', 'HEAD'], worktree, 'git');
+  if (!current.ok || current.stdout.trim() !== branch) return { ok: false, error: 'Worktree branch changed during publication. Try again.' };
+  // No inherited vendor push options, tag publication, or recursive submodule pushes.
+  const push = await execTool(['-c', 'push.pushOption=', 'push', '--no-follow-tags', '--recurse-submodules=no', '-u', '--', 'origin', `refs/heads/${branch}:refs/heads/${branch}`], worktree, 'git', PUSH_TIMEOUT_MS, target);
+  if (!push.ok) return { ok: false, error: 'Git push failed. Check the origin remote and git authentication.' };
+  if (existing) return { ok: true, url: urlFor(existing.number), dryRun: false };
+  const body = Buffer.from(buildPrBody(input.handoffText, run.task).replace(/\0/g, '')).subarray(0, 60_000).toString('utf8');
+  const title = (run.title || run.task).replace(/[\x00-\x1f\x7f]/g, ' ').trim().slice(0, 250) || 'Cezar task';
+  await execTool(['pr', 'create', '--draft', '--head', branch, '--base', base, '--title', title, '--body', body], worktree, 'gh', PUSH_TIMEOUT_MS, target);
+  // A timeout may mean GitHub accepted the create. Read back identity/state rather
+  // than retrying a write or trusting a URL printed in a CLI error.
+  const published = await findExisting();
+  if (!published?.draft) return { ok: false, error: 'Could not verify the draft pull request. Check GitHub before retrying.' };
+  listCache.delete(githubKey(target));
+  return { ok: true, url: urlFor(published.number), dryRun: false };
 }
+
+const publicationRefSchema = z.object({ ref: z.string(), repo: z.object({ full_name: z.string() }) });
+const publicationPrSchema = z.object({
+  number: z.number().int().positive(), state: z.enum(['open', 'closed']), draft: z.boolean(),
+  head: publicationRefSchema.extend({ repo: publicationRefSchema.shape.repo.nullable() }), base: publicationRefSchema,
+});
 
 /**
  * PR body from the handoff journal: the "## Goal" section (task text as
@@ -2623,11 +2631,6 @@ function section(text: string, header: string): string {
   const rest = text.slice(start + header.length + 1);
   const next = rest.indexOf('\n## ');
   return (next >= 0 ? rest.slice(0, next) : rest).trim();
-}
-
-/** Last 3 stderr lines, pipe-joined — enough context, toast-sized. */
-function tail(stderr: string): string {
-  return stderr.trim().split('\n').slice(-3).join(' | ').slice(0, 300);
 }
 
 interface ExecResult {

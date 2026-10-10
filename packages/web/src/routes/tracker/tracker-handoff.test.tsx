@@ -33,7 +33,8 @@ describe('Tracker handoff', () => {
     const checkbox = () => screen.getByRole('checkbox', { name: 'Allow Linear workflow writeback for this run' }) as HTMLInputElement
     expect(checkbox().checked).toBe(false)
     expect(screen.getByText(/key's full permissions/)).toBeTruthy()
-    expect(screen.getByText(/Continue the same run with the published URL/)).toBeTruthy()
+    expect(screen.getByText(/moves it to In Progress before agent work/)).toBeTruthy()
+    expect(screen.getByText(/No automatic Review or Done status, push or merge/)).toBeTruthy()
     fireEvent.click(checkbox())
     rendered.rerender(view({ ...association, connectionId: '33333333-3333-4333-8333-333333333333' }))
     expect(checkbox().checked).toBe(false)

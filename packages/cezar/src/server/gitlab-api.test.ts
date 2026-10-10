@@ -19,8 +19,7 @@ it('publishes a GitLab draft through both route mounts and never merges', async 
   git(['init', '-b', 'cez/test']);
   // The fixture doubles as run worktree: asynchronous store writes must not make its
   // final autosave dirty. Real task worktrees do not contain their live run store.
-  writeFileSync(join(root, '.gitignore'), '.ai/cezar/\n');
-  git(['add', '.gitignore']);
+  writeFileSync(join(root, '.git/info/exclude'), '/.ai/cezar/\n');
   git(['-c', 'user.name=test', '-c', 'user.email=test@example.com', 'commit', '--allow-empty', '-m', 'test']);
   git(['remote', 'add', 'origin', 'https://gitlab.com/group/sub/app.git']);
   store = RunStore.open(join(root, '.ai/cezar'));
@@ -34,9 +33,8 @@ it('publishes a GitLab draft through both route mounts and never merges', async 
   active = false;
   for (const prefix of ['/api/v1', '/api/v1/p/default']) {
     const response = await post(prefix);
-    const result = await response.json();
-    expect(response.status, JSON.stringify(result)).toBe(201);
-    expect(result).toEqual({ url: 'https://gitlab.com/group/sub/app/-/merge_requests/777', dryRun: true });
+    expect(response.status, await response.clone().text()).toBe(201);
+    expect(await response.json()).toEqual({ url: 'https://gitlab.com/group/sub/app/-/merge_requests/777', dryRun: true });
   }
   expect(store.getRun(run.id)).toMatchObject({ status: 'done', pullRequestUrl: 'https://gitlab.com/group/sub/app/-/merge_requests/777' });
   const merge = await apiRequest(app, '/api/v1/github/prs/777/merge', {

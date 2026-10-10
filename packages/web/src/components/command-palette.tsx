@@ -1,7 +1,7 @@
 import { CheckIcon, FolderOpenIcon, LayersIcon, MoonIcon, PlusIcon } from 'lucide-react'
 import * as React from 'react'
 import { useNavigate as useRouterNavigate } from 'react-router'
-import { useHealth, useProjects, useRunsForProject, useRunsIndex, useSkills, useUiState } from '@/api/queries'
+import { useHealth, useProjectForge, useProjects, useRunsForProject, useRunsIndex, useSkills, useUiState } from '@/api/queries'
 import { scopeTo, useActiveProjectId, useNavigate } from '@/lib/project-router'
 import type { ProjectListEntry, RunIndexEntry, RunRecord } from '@open-mercato/cezar-api-client'
 import { visibleNavItems } from '@/components/nav-items'
@@ -307,6 +307,7 @@ function PaletteContent({ close }: { close: () => void }) {
   const [search, setSearch] = React.useState('')
   const searching = search.trim() !== ''
   const activeProjectId = useActiveProjectId()
+  const forge = useProjectForge(activeProjectId)
   const { theme, setTheme } = useTheme()
   // The registry is workspace-scoped (not project-scoped), so this is the ONE list the palette
   // can offer everywhere — including global settings, which has no active project at all. The
@@ -453,8 +454,8 @@ function PaletteContent({ close }: { close: () => void }) {
             </CommandItem>
           ) : null}
           {visibleNavItems({
-            forge: health.data?.forge?.available === true || health.data?.forge?.kind === 'gitlab',
-            forgeKind: health.data?.forge?.kind,
+            forge: forge?.available === true || forge?.kind === 'gitlab',
+            forgeKind: forge?.kind,
             inbox: health.data?.capabilities.followups === true,
             automations: health.data?.capabilities.automations === true,
             tracker: registry?.projects.find((project) => project.id === (activeProjectId ?? registry.bootProject))?.tracker,

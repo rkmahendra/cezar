@@ -12,6 +12,7 @@ import { writeTrackerAssociation } from '../tracker-association.ts';
 import { TrackerConnections } from '../server/tracker/connections.ts';
 import { resolveTrackerAgentEnv } from '../server/tracker/agent-credentials.ts';
 import { trackerWorkflowSchema } from '@open-mercato/cezar-contract';
+import * as linearWorkflow from '../server/tracker/linear-workflow.ts';
 
 const run = promisify(execFile);
 const GIT_ID = ['-c', 'user.name=test', '-c', 'user.email=test@local'];
@@ -105,6 +106,8 @@ describe('a resumed session keeps its workflow step tools', () => {
   });
 
   afterEach(async () => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
     vi.unstubAllEnvs();
     manager?.dispose();
     manager = undefined;
@@ -177,6 +180,7 @@ describe('a resumed session keeps its workflow step tools', () => {
       itemId: 'OPS-1', url: 'https://linear.app/acme/issue/OPS-1', delegateCredentials: true,
     });
     await writeTrackerAssociation(join(repoRoot, '.ai/cezar'), binding.association);
+    const lifecycle = vi.spyOn(linearWorkflow, 'startTrackerWorkflow').mockResolvedValue('Linear workflow: started state confirmed.');
     manager!.dispose();
     manager = new RunManager(store, repoRoot, { resolveTrackerEnv: resolveTrackerAgentEnv });
     // Hold only scheduling, so startRun's real persistence and recovery run unmodified.
@@ -199,6 +203,8 @@ describe('a resumed session keeps its workflow step tools', () => {
     expect(opening.systemPrompt).not.toContain('synthetic-linear-secret');
     expect(registerSecrets).toHaveBeenCalledWith(record.id, ['synthetic-linear-secret']);
     await settled(record.id);
+    expect(store.getRun(record.id)?.trackerWorkflow?.startedAt).toBeDefined();
+    expect(lifecycle).toHaveBeenNthCalledWith(1, repoRoot, binding, expect.objectContaining({ checkOnly: false }));
     const publication = 'https://gitlab.example.com/team/repo/-/merge_requests/7';
     store.updateRun(record.id, { pullRequestUrl: publication });
     manager.dispose();
@@ -211,11 +217,59 @@ describe('a resumed session keeps its workflow step tools', () => {
     expect(resumed.systemPrompt).toContain(publication);
     expect(resumed.systemPrompt).toContain('without moving the issue back to in-progress');
     await settled(record.id);
+    expect(lifecycle).toHaveBeenLastCalledWith(repoRoot, expect.objectContaining({ startedAt: expect.any(String) }), expect.objectContaining({ checkOnly: true }));
     await connections.write(repoRoot, { kind: 'linear', key: 'replacement-secret' });
     expect(manager.continueRun(record.id, { text: 'Retry writeback', runner: 'claude' })).toEqual({ ok: true });
     await expect.poll(() => store.getRun(record.id)?.status, { timeout: 15_000 }).toBe('failed');
     expect(store.getRun(record.id)?.error).toMatch(/connection or scope changed/i);
     expect(captured.specs).toHaveLength(2);
+  });
+
+  it('blocks first spawn on Linear error, then retries only with a fresh consented run', async () => {
+    vi.stubEnv('CEZ_DRY_RUN', '0');
+    const binding = trackerWorkflowSchema.parse({
+      association: { kind: 'linear', source: { id: 'org', webUrl: 'https://linear.app/acme' },
+        externalId: '11111111-1111-4111-8111-111111111111', externalName: 'Team', connectionId: '22222222-2222-4222-8222-222222222222' },
+      itemId: 'OPS-1', url: 'https://linear.app/acme/issue/OPS-1', delegateCredentials: true,
+    });
+    const lifecycle = vi.spyOn(linearWorkflow, 'startTrackerWorkflow')
+      .mockRejectedValueOnce(new linearWorkflow.TrackerWorkflowError('Linear team has no unique started state.'))
+      .mockResolvedValue('Linear workflow: already started, status unchanged.');
+    manager!.dispose();
+    manager = new RunManager(store, repoRoot, { resolveTrackerEnv: async () => ({ LINEAR_API_KEY: 'synthetic-secret' }) });
+    const first = manager.startRun(SINGLE_DEF, { task: 'Work', worktree: false, runner: 'claude', trackerWorkflow: binding });
+    await settled(first.id);
+    expect(store.getRun(first.id)?.error).toContain('no unique started state');
+    expect(store.getRun(first.id)?.trackerWorkflow?.startedAt).toBeUndefined();
+    expect(captured.specs).toHaveLength(0);
+    expect(manager.continueRun(first.id)).toEqual({ ok: false, error: 'no agent session to resume' });
+    const retried = manager.startRun(SINGLE_DEF, { task: 'Retry Work', worktree: false, runner: 'claude', trackerWorkflow: binding });
+    await specAt(0);
+    await settled(retried.id);
+    expect(store.getRun(retried.id)?.trackerWorkflow?.startedAt).toBeDefined();
+    lifecycle.mockRejectedValueOnce(new linearWorkflow.TrackerWorkflowError('Linear issue identity or scope changed.'));
+    expect(manager.continueRun(retried.id, { text: 'Continue' })).toEqual({ ok: true });
+    await expect.poll(() => store.getRun(retried.id)?.status).toBe('failed');
+    expect(store.getRun(retried.id)?.error).toContain('identity or scope changed');
+    expect(captured.specs).toHaveLength(1);
+  });
+
+  it('legacy Linear continuation validates without repeating start transition', async () => {
+    vi.stubEnv('CEZ_DRY_RUN', '0');
+    const id = terminalRun({ def: SINGLE_DEF, steps: [{ id: 'work', sessionId: 'existing' }] });
+    store.updateRun(id, { trackerWorkflow: trackerWorkflowSchema.parse({
+      association: { kind: 'linear', source: { id: 'org', webUrl: 'https://linear.app/acme' },
+        externalId: '11111111-1111-4111-8111-111111111111', externalName: 'Team', connectionId: '22222222-2222-4222-8222-222222222222' },
+      itemId: 'OPS-1', url: 'https://linear.app/acme/issue/OPS-1', delegateCredentials: true,
+    }) });
+    const lifecycle = vi.spyOn(linearWorkflow, 'startTrackerWorkflow').mockResolvedValue('Linear workflow: status unchanged.');
+    manager!.dispose();
+    manager = new RunManager(store, repoRoot, { resolveTrackerEnv: async () => ({ LINEAR_API_KEY: 'synthetic-secret' }) });
+    expect(manager.continueRun(id)).toEqual({ ok: true });
+    await specAt(0);
+    await settled(id);
+    expect(lifecycle).toHaveBeenCalledWith(repoRoot, expect.any(Object), expect.objectContaining({ checkOnly: true }));
+    expect(store.getRun(id)?.trackerWorkflow?.startedAt).toBeUndefined();
   });
 
   it('the opening spawn and the Continue spawn of one real run agree on the tool policy', async () => {

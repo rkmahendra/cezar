@@ -71,6 +71,8 @@ export const trackerWorkflowSchema = z.object({
   itemId: trackerWorkflowInputSchema.shape.itemId,
   url: httpsUrlSchema,
   delegateCredentials: z.literal(true),
+  /** Successful server start/readback, retained across steps, Continue and restart. */
+  startedAt: z.iso.datetime().optional(),
 }).strict();
 export type TrackerWorkflow = z.infer<typeof trackerWorkflowSchema>;
 

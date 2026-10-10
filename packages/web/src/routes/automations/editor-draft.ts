@@ -65,6 +65,7 @@ export interface EditorDraft {
   /** `null` = never touched; `''` = auto, explicitly. */
   model: string | null
   autonomous: boolean
+  linearWorkflow: boolean
   dispatch: boolean
   maxSubtasks: number
   reviewChild: boolean
@@ -141,6 +142,7 @@ export function newDraft(): EditorDraft {
     account: null,
     model: null,
     autonomous: true,
+    linearWorkflow: false,
     dispatch: false,
     maxSubtasks: 4,
     reviewChild: true,
@@ -188,6 +190,7 @@ export function fromDefinition(definition: AutomationDefinition): EditorDraft {
     account: task.agentProfile ?? null,
     model: task.model ?? null,
     autonomous: task.autonomous ?? false,
+    linearWorkflow: task.linearWorkflow === true,
     dispatch: task.dispatch !== undefined,
     maxSubtasks: task.dispatch?.maxSubtasks ?? base.maxSubtasks,
     reviewChild: task.dispatch?.reviewChild ?? base.reviewChild,
@@ -232,6 +235,7 @@ const isRunner = (value: string): value is Runner =>
 export function applyTemplate(draft: EditorDraft, template: TemplatePick): EditorDraft {
   return {
     ...draft,
+    linearWorkflow: false,
     name: template.name,
     kind: template.kind,
     schedule: template.schedule ? { ...template.schedule } : draft.schedule,
@@ -275,6 +279,7 @@ export function toBody(draft: EditorDraft): AutomationBody {
     ...(draft.account ? { agentProfile: draft.account } : {}),
     ...(draft.model ? { model: draft.model } : {}),
     autonomous: draft.autonomous,
+    ...(draft.linearWorkflow && draft.kind === 'tracker' && draft.trackerTrigger?.association.kind === 'linear' ? { linearWorkflow: true } : {}),
     ...(draft.dispatch ? { dispatch: { maxSubtasks: draft.maxSubtasks, reviewChild: draft.reviewChild } } : {}),
   }
   if (draft.kind === 'schedule') {

@@ -1,6 +1,7 @@
 import type { TrackerAssociation, TrackerWorkflow } from '@open-mercato/cezar-contract';
 import { TrackerAgentBindingError } from '../server/tracker/agent-credentials.ts';
 import { trackerWorkflowPrompt } from '../server/tracker/workflow.ts';
+import { startTrackerWorkflow, TrackerWorkflowError } from '../server/tracker/linear-workflow.ts';
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
@@ -1243,7 +1244,7 @@ export class RunManager {
   private async agentEnvForStep(
     runId: string,
     backend: RunnerId,
-    options: { generateFollowups?: boolean; recordedProfileId?: string } = {},
+    options: { generateFollowups?: boolean; recordedProfileId?: string; trackerCheckOnly?: boolean } = {},
   ): Promise<{ env: Record<string, string>; profileId: string }> {
     const run = this.store.getRun(runId);
     const profileId = options.recordedProfileId
@@ -1260,6 +1261,22 @@ export class RunManager {
       secrets.push(Buffer.from(`${trackerEnv.JIRA_EMAIL}:${trackerEnv.JIRA_API_TOKEN}`).toString('base64'));
     }
     this.store.registerRunSecrets(runId, secrets);
+    if (run?.trackerWorkflow) {
+      const checkOnly = Boolean(run.trackerWorkflow.startedAt || options.trackerCheckOnly);
+      const message = await startTrackerWorkflow(this.repoRoot, run.trackerWorkflow, {
+        checkOnly,
+        assertActive: () => {
+          if (this.active.get(runId)?.cancelled || this.store.getRun(runId)?.status === 'cancelled')
+            throw new TrackerWorkflowError('Linear workflow: task was canceled before the request.');
+        },
+      });
+      if (!checkOnly && process.env.CEZ_DRY_RUN !== '1') {
+        this.store.updateRun(runId, { trackerWorkflow: { ...run.trackerWorkflow, startedAt: new Date().toISOString() } });
+        try { this.store.flush({ throwOnError: true }); }
+        catch { throw new TrackerWorkflowError('Linear start was confirmed but its receipt could not be saved. Inspect the issue before launching a new run.'); }
+      }
+      this.store.appendEvent(runId, { type: 'note', message });
+    }
     return {
       env: { ...this.agentEnv(runId, options.generateFollowups), ...trackerEnv, ...resolved.env },
       profileId: resolved.profile.id,
@@ -3930,9 +3947,10 @@ export class RunManager {
       continueProfile = await this.agentEnvForStep(runId, continueBackend, {
         generateFollowups,
         recordedProfileId: resumedProfileId,
+        trackerCheckOnly: true,
       });
     } catch (err) {
-      if (!(err instanceof AgentTempDirError) && !(err instanceof TrackerAgentBindingError)) throw err;
+      if (!(err instanceof AgentTempDirError) && !(err instanceof TrackerAgentBindingError) && !(err instanceof TrackerWorkflowError)) throw err;
       failBeforeSpawn(err.message);
       return;
     }
@@ -4629,7 +4647,10 @@ export class RunManager {
 
     const sessionId = randomUUID();
     const backend = step.runner ?? taskBackend;
-    this.store.updateStep(runId, step.id, { sessionId, backend });
+    // A crash before Linear's first start must recover as unspawned, not Continue past consent.
+    // Pin its session only after the persisted start receipt; ordinary workflows are unchanged.
+    const trackerWorkflow = this.store.getRun(runId)?.trackerWorkflow;
+    if (!trackerWorkflow) this.store.updateStep(runId, step.id, { sessionId, backend });
 
     const stepRecord = this.store.getRun(runId)?.steps.find((s) => s.id === step.id);
     const startTokens = stepRecord?.tokensUsed ?? 0;
@@ -4911,12 +4932,17 @@ export class RunManager {
     try {
       stepProfile = await this.agentEnvForStep(runId, stepBackend, {
         generateFollowups: followupsEnabled() && input.generateFollowups !== false,
+        // This step's session id is preallocated above, not evidence that work already began.
+        trackerCheckOnly: this.store.getRun(runId)?.steps.some(s => s.id !== step.id && s.sessionId),
       });
     } catch (err) {
-      if (err instanceof AgentTempDirError || err instanceof TrackerAgentBindingError) return err.message;
+      if (err instanceof TrackerAgentBindingError || err instanceof TrackerWorkflowError)
+        this.store.updateStep(runId, step.id, { sessionId: undefined });
+      if (err instanceof AgentTempDirError || err instanceof TrackerAgentBindingError || err instanceof TrackerWorkflowError) return err.message;
       throw err;
     }
     this.store.updateStep(runId, step.id, { profileId: stepProfile.profileId });
+    if (trackerWorkflow) this.store.updateStep(runId, step.id, { sessionId, backend });
 
     const runner = createRunner(stepBackend);
     const stepMcp = await this.privateMcpForLaunch(stepBackend, onEvent);

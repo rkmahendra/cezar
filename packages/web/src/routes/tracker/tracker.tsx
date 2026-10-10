@@ -13,7 +13,7 @@ import { TRACKER_PROVIDERS } from '@/lib/tracker-providers'
 import { getTrackerItem } from '@/api/client'
 import { useTrackerWatch } from '@/api/tracker-watch'
 import { useProjectScope } from '@/api/project-scope-context'
-import { queryKeys, TRACKER_STALE_TIME, TrackerRefreshError, useSkills, useTrackerConnection, useTrackerAssociation, useTrackerItem, useTrackerItems, useWorkflows } from '@/api/queries'
+import { queryKeys, TRACKER_STALE_TIME, TrackerRefreshError, useHealth, useSkills, useTrackerConnection, useTrackerAssociation, useTrackerItem, useTrackerItems, useWorkflows } from '@/api/queries'
 import { Button } from '@/components/ui/button'
 import { toast } from '@/components/ui/toaster'
 import { Link } from '@/lib/project-router'
@@ -79,6 +79,7 @@ function SetupState() {
 
 function TrackerBrowse({ scopePending, association, selectedId, drafts, selection, setSelection }: { scopePending: boolean; association: TrackerAssociation; selectedId?: string; drafts: TrackerDraftCache; selection: TrackerHandoffSelection; setSelection: React.Dispatch<React.SetStateAction<TrackerHandoffSelection>> }) {
   const queryClient = useQueryClient()
+  const automationsAvailable = useHealth().data?.capabilities?.automations === true
   const desktop = useIsDesktop()
   const listVisible = desktop || selectedId === undefined
   const [initialSelection, setInitialSelection] = useState<{ filter: string; id: string } | null>(null)
@@ -121,6 +122,7 @@ function TrackerBrowse({ scopePending, association, selectedId, drafts, selectio
           {watch.checkedAt ? `synced ${shortAge(watch.checkedAt)} ago` : 'refresh'}
         </button>
       </div>
+      {automationsAvailable ? <Link to="/automations/new" className="mt-2 inline-block text-xs text-violet underline underline-offset-4">Automate issue intake</Link> : null}
       <div className="mt-2.5 flex items-center justify-between border-b border-border pb-2">
         <h2 className="text-[13px] font-medium">Issues · {items.length}{result.hasNextPage ? '+' : ''}</h2>
         <select aria-label="Issue state" className="min-w-0 rounded-md border border-input bg-card px-2 py-1 text-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50" value={state} onChange={(event) => { setState(event.target.value as 'active' | 'all'); setStateExplicit(true) }}><option value="active">Active</option><option value="all">All states</option></select>

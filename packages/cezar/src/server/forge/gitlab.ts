@@ -3,6 +3,7 @@ import { promisify } from 'node:util';
 import { z } from 'zod';
 import { autosaveCommit } from '../../git-worktree.ts';
 import { buildPrBody } from './github.ts';
+import { parseRemote } from './host-discovery.ts';
 import type { DraftPrInput, DraftPrOutcome, ForgeAvailability, ForgeDriver, ForgeItem, ForgePrStatus } from './types.ts';
 
 /** GitLab REST v4 via the user's installed glab. Community/Enterprise use the same API.
@@ -186,13 +187,9 @@ export function createGitlabDriver(repoRoot: string, repoRef: GitlabRepoRef): Fo
   }
   function matchesRemote(remote: string): boolean {
     if (!remote || /[\r\n]/.test(remote)) return false;
-    try {
-      const scp = /^(?:[^@/:]+@)?([^/:]+):(.+)$/.exec(remote);
-      const url = new URL(remote.includes('://') ? remote : `ssh://${scp?.[1]}/${scp?.[2]}`);
-      const host = ['http:', 'https:'].includes(url.protocol) ? url.host : url.hostname;
-      return ['http:', 'https:', 'ssh:', 'git:', 'git+ssh:'].includes(url.protocol) && host.toLowerCase() === ref?.host.toLowerCase()
-        && url.pathname.replace(/^\//, '').replace(/\.git$/, '').replace(/\/$/, '') === projectPath;
-    } catch { return false; }
+    const remoteRef = parseRemote(remote);
+    return !!remoteRef && remoteRef.host === ref?.host.toLowerCase()
+      && `${remoteRef.owner}/${remoteRef.repo}` === projectPath;
   }
   async function createPR(input: DraftPrInput): Promise<DraftPrOutcome> {
     try {
@@ -204,6 +201,8 @@ export function createGitlabDriver(repoRoot: string, repoRef: GitlabRepoRef): Fo
       // never a stale run.branch or detached HEAD. Full refs below prevent refspec injection.
       const branch = (await command('git', ['symbolic-ref', '--quiet', '--short', 'HEAD'], cwd)).trim();
       await validBranch(branch, cwd);
+      const configured = run.baseBranch?.replace(/^origin\//, '');
+      if (branch === configured) throw new GitlabError('Cannot publish the target or default branch as a task merge request.');
       const dryRun = process.env.CEZ_DRY_RUN === '1';
       // Validate publication before autosave mutates the index/history. Dry-run still performs
       // the recovery flush without requiring a remote or contacting GitLab.
@@ -212,7 +211,6 @@ export function createGitlabDriver(repoRoot: string, repoRef: GitlabRepoRef): Fo
         if (!matchesRemote(remote)) throw new GitlabError('The worktree origin push URL does not match this GitLab project.');
       }
       const targetProject = dryRun ? undefined : await project();
-      const configured = run.baseBranch?.replace(/^origin\//, '');
       const target = configured && !/^[0-9a-f]{7,40}$/i.test(configured) ? configured : targetProject?.default_branch;
       if (!dryRun && !target) throw new GitlabError('GitLab project has no default branch.');
       if (target) await validBranch(target, cwd);
@@ -231,13 +229,14 @@ export function createGitlabDriver(repoRoot: string, repoRef: GitlabRepoRef): Fo
         throw new GitlabError('Worktree still has uncommitted changes after autosave. Check git status before publishing.');
       }
       if (dryRun) return { ok: true, url: `${base}/-/merge_requests/777`, dryRun: true };
-      if (!targetProject || !target) throw new GitlabError('GitLab project has no default branch.');
+      if (!targetProject || !target) throw new GitlabError('GitLab publication target could not be resolved.');
       const current = (await command('git', ['symbolic-ref', '--quiet', '--short', 'HEAD'], cwd)).trim();
       if (current !== branch) throw new GitlabError('The worktree branch changed during publication. Try again.');
       if (!matchesRemote((await command('git', ['remote', 'get-url', '--push', '--all', 'origin'], cwd)).trim())) {
         throw new GitlabError('The worktree origin push URL does not match this GitLab project.');
       }
-      await command('git', ['push', '-u', '--', 'origin', `refs/heads/${branch}:refs/heads/${branch}`], cwd, 60_000);
+      // push.pushOption can request MR creation or auto-merge. Neither is authorized by a push.
+      await command('git', ['-c', 'push.pushOption=', 'push', '--no-follow-tags', '--recurse-submodules=no', '-u', '--', 'origin', `refs/heads/${branch}:refs/heads/${branch}`], cwd, 60_000);
       const outcome = (mr: MergeRequest): DraftPrOutcome => ({ ok: true, url: `${base}/-/merge_requests/${mr.iid}`, dryRun: false });
       // Keep an existing MR's human-selected draft/ready state. Never duplicate or auto-merge.
       if (existing) return outcome(existing);

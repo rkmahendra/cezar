@@ -48,13 +48,9 @@ function lookupError(error: unknown) {
   return failure.code === 'invalid_cursor' ? { available: false as const, code: 'invalid_response' as const, reason: 'Linear lookup failed.' } : failure;
 }
 
-export function createLinearClient(config: { key: string }, fetcher: typeof fetch = fetch):
-TrackerProvider {
+/** Shared bounded GraphQL transport for reads and explicitly consented workflow mutations. */
+export function createLinearGraphql(config: { key: string }, fetcher: typeof fetch = fetch) {
   const http = new TrackerHttp(fetcher);
-  const cache = new ResultCache<Cached>();
-  let source: TrackerSource | undefined;
-  let sourcePending: Promise<TrackerSource> | undefined;
-  let generation = 0;
   const graphql = async (query: string, variables: Record<string, unknown>, signal: AbortSignal): Promise<unknown> => {
     let resetSeconds: number | undefined;
     let status = 200;
@@ -87,6 +83,15 @@ TrackerProvider {
     if (envelope.data === undefined || envelope.data === null) return invalid();
     return envelope.data;
   };
+  return graphql;
+}
+
+export function createLinearClient(config: { key: string }, fetcher: typeof fetch = fetch): TrackerProvider {
+  const graphql = createLinearGraphql(config, fetcher);
+  const cache = new ResultCache<Cached>();
+  let source: TrackerSource | undefined;
+  let sourcePending: Promise<TrackerSource> | undefined;
+  let generation = 0;
   const currentSource = async (signal: AbortSignal): Promise<TrackerSource> => {
     if (source) return source;
     if (sourcePending) return sourcePending;

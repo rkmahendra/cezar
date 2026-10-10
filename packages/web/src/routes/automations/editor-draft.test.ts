@@ -71,6 +71,19 @@ describe('newDraft', () => {
 })
 
 describe('fromDefinition / toBody', () => {
+  it('round-trips explicit Linear consent but never carries it to another provider or template', () => {
+    const definition: AutomationDefinition = { ...GITHUB_DEF, kind: 'tracker', trackerTrigger: {
+      association: { kind: 'linear', source: { id: 'org', webUrl: 'https://linear.app/acme' }, externalId: 'team', externalName: 'Team' }, events: ['issue.opened'],
+    }, task: { prompt: 'Work on it', linearWorkflow: true } };
+    const draft = fromDefinition(definition)
+    expect(toBody(draft).task.linearWorkflow).toBe(true)
+    expect(cliDefinitionOf(draft).task.linearWorkflow).toBe(true)
+    expect(toBody({ ...draft, linearWorkflow: false }).task).not.toHaveProperty('linearWorkflow')
+    expect(toBody({ ...draft, kind: 'github' }).task).not.toHaveProperty('linearWorkflow')
+    expect(toBody({ ...draft, trackerTrigger: { ...definition.trackerTrigger!, association: { ...definition.trackerTrigger!.association, kind: 'jira' } } }).task).not.toHaveProperty('linearWorkflow')
+    expect(applyTemplate(draft, { name: 'Another task', kind: 'schedule', prompt: 'Read only' }).linearWorkflow).toBe(false)
+    expect(newDraft().linearWorkflow).toBe(false)
+  })
   it('round-trips a schedule definition', () => {
     const draft = fromDefinition(SCHEDULE_DEF)
     expect(draft.enabled).toBe(true)

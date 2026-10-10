@@ -109,17 +109,30 @@ describe('GitHub host routing', () => {
 describe('enterprise draft PR publication (mock only)', () => {
   const input = { run: { worktreePath: '/worktree', branch: 'cez/test', baseBranch: 'origin/develop', title: 'Test', task: 'Test' }, handoffText: '' } as DraftPrInput;
   function publishMock(url: string, remote = 'https://code.example/acme/demo.git') {
-    execFile.mockImplementation((bin, args, _opts, cb) => cb(null, bin === 'gh' ? url : args[0] === 'remote' ? remote : '', ''));
+    let created = false;
+    execFile.mockImplementation((bin, args, _opts, cb) => {
+      let out = '';
+      if (bin === 'git' && args[0] === 'symbolic-ref') out = 'cez/test';
+      if (bin === 'git' && args[0] === 'remote') out = remote;
+      if (bin === 'gh' && args[1] === 'repos/acme/demo') out = JSON.stringify({ full_name: 'acme/demo', default_branch: 'main' });
+      if (bin === 'gh' && args[1]?.includes('/pulls?')) out = JSON.stringify(created && url.startsWith('https://code.example/') ? [{
+        number: 42, state: 'open', draft: true,
+        head: { ref: 'cez/test', repo: { full_name: 'acme/demo' } },
+        base: { ref: 'develop', repo: { full_name: 'acme/demo' } },
+      }] : []);
+      if (bin === 'gh' && args[0] === 'pr') { created = true; out = url; }
+      cb(null, out, '');
+    });
   }
   it('returns only matching enterprise PR URLs and scopes gh creation auth', async () => {
     publishMock('https://code.example/acme/demo/pull/42');
     expect(await createDraftPr(input)).toEqual({ ok: true, url: 'https://code.example/acme/demo/pull/42', dryRun: false });
-    const ghCall = execFile.mock.calls.find((call) => call[0] === 'gh')!;
+    const ghCall = execFile.mock.calls.find((call) => call[0] === 'gh' && call[1][0] === 'pr')!;
     expect(ghCall[1]).toEqual(expect.arrayContaining(['--draft', '--base', 'develop']));
     expect(ghCall[2].env.GH_REPO).toBe('code.example/acme/demo');
     expect(ghCall[2].env.GH_TOKEN).toBeUndefined();
     expect(ghCall[2].env.GITHUB_TOKEN).toBeUndefined();
-    const pushCall = execFile.mock.calls.find((call) => call[1][0] === 'push')!;
+    const pushCall = execFile.mock.calls.find((call) => call[1].includes('push'))!;
     expect(pushCall[2].env.GH_TOKEN).toBeUndefined();
     expect(pushCall[2].env.GITHUB_TOKEN).toBeUndefined();
     expect(pushCall[2].env.GIT_TERMINAL_PROMPT).toBe('0');
@@ -129,17 +142,17 @@ describe('enterprise draft PR publication (mock only)', () => {
     expect((await createDraftPr(input)).ok).toBe(false);
     execFile.mockClear();
     expect((await createDraftPr(input, { host: 'code.example', owner: 'other', repo: 'demo' })).ok).toBe(false);
-    expect(execFile.mock.calls.some((call) => call[1][0] === 'push')).toBe(false);
+    expect(execFile.mock.calls.some((call) => call[1].includes('push'))).toBe(false);
   });
   it('refuses unknown and GitLab origins before push', async () => {
     publishMock('', 'https://gitlab.com/acme/demo.git');
     expect((await createDraftPr(input)).ok).toBe(false);
-    expect(execFile.mock.calls.some((call) => call[1][0] === 'push')).toBe(false);
+    expect(execFile.mock.calls.some((call) => call[1].includes('push'))).toBe(false);
   });
   it('refuses a separate push URL for another host before push', async () => {
     execFile.mockImplementation((_bin, args, _opts, cb) => cb(null,
       args.includes('--push') ? 'https://other.example/acme/demo.git' : 'https://code.example/acme/demo.git', ''));
     expect((await createDraftPr(input)).ok).toBe(false);
-    expect(execFile.mock.calls.some((call) => call[1][0] === 'push')).toBe(false);
+    expect(execFile.mock.calls.some((call) => call[1].includes('push'))).toBe(false);
   });
 });

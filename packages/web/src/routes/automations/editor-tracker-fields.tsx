@@ -109,6 +109,6 @@ export function EditorTrackerFields({ trigger, intervalSeconds, onChange, onVali
         <SelectContent>{POLL_MINUTES.map(minutes => <SelectItem key={minutes} value={String(minutes)}>{minutes} min</SelectItem>)}</SelectContent>
       </Select>
     </div>
-    <p className="text-xs text-muted-foreground">Only events after enabling are eligible. Existing backlog is not launched. The workflow agent receives this project’s tracker credentials to carry out your instructions; status updates are not guaranteed by the scheduler.</p>
+    <p className="text-xs text-muted-foreground">Only events after enabling are eligible. Existing backlog is not launched. The workflow agent receives this project's tracker credentials to carry out your instructions. Server-managed Linear status updates require the separate workflow option below.</p>
   </div>
 }

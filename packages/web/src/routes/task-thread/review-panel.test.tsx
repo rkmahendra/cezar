@@ -58,7 +58,7 @@ const jsonResponse = (body: unknown, status = 200) =>
 
 /** Stubs fetch, records every request, and lets a test override specific `METHOD path` keys.
  *  Defaults: the diff answers `DIFF`, the runs list is empty, every mutation succeeds. */
-function stubFetch(overrides: Record<string, () => Response> = {}): SentRequest[] {
+function stubFetch(overrides: Record<string, () => Response | Promise<Response>> = {}): SentRequest[] {
   const sent: SentRequest[] = []
   vi.stubGlobal(
     'fetch',
@@ -345,6 +345,44 @@ describe('the review gate on the thread', () => {
       )
     })
     expect(sent.filter((r) => r.method === 'POST' && r.path === '/api/v1/runs/r1/pr')).toHaveLength(1)
+  })
+
+  it('blocks Send back, Accept and repeated publication while a draft MR is pending', async () => {
+    let resolve!: (response: Response) => void
+    const sent = stubFetch({
+      'GET /api/v1/health': () => jsonResponse({ forge: { kind: 'gitlab' } }),
+      'POST /api/v1/runs/r1/pr': () => new Promise<Response>(done => { resolve = done }),
+    })
+    renderWithProviders(<ReviewPanel run={run('review')} />)
+    const publish = await screen.findByRole('button', { name: 'Draft MR' })
+    await waitFor(() => expect((screen.getByRole('button', { name: 'Send back' }) as HTMLButtonElement).disabled).toBe(false))
+    fireEvent.click(publish)
+    await waitFor(() => expect(resolve).toBeTypeOf('function'))
+    for (const name of ['Send back', 'Accept', 'Draft MR']) expect((screen.getByRole('button', { name }) as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.keyDown(screen.getByLabelText('Notes for the agent'), { key: 'Enter', ctrlKey: true })
+    expect(sent.filter(request => request.method === 'POST')).toHaveLength(1)
+    resolve(jsonResponse({ url: 'https://git.example.com/team/app/-/merge_requests/7', dryRun: true }, 201))
+    await waitFor(() => expect((publish as HTMLButtonElement).disabled).toBe(false))
+    expect(document.querySelector('[data-slot="toast"]')?.textContent).toContain('Draft MR created:')
+  })
+
+  it('labels published GitLab links MR even without provider discovery', () => {
+    stubFetch()
+    renderWithProviders(<ThreadView run={run('done', { pullRequestUrl: 'https://git.example.com/team/app/-/merge_requests/7' })} thread={reduceThread([])} />)
+    expect(document.querySelector('[data-slot="pr-link"]')?.textContent).toContain('MR')
+    expect(document.querySelector('[data-slot="linear-publication-followup"]')).toBeNull()
+  })
+
+  it('offers Linear follow-up guidance only for an explicitly bound published run', () => {
+    const sent = stubFetch()
+    const trackerWorkflow: NonNullable<ApiRun['trackerWorkflow']> = {
+      association: { kind: 'linear', source: { id: 'org', webUrl: 'https://linear.app/team' }, externalId: 'team', externalName: 'Team', connectionId: 'connection' },
+      itemId: 'TEAM-42', url: 'https://linear.app/team/issue/TEAM-42', delegateCredentials: true,
+    }
+    renderWithProviders(<ThreadView run={run('done', { trackerWorkflow, pullRequestUrl: 'https://git.example.com/team/app/-/merge_requests/7' })} thread={reduceThread([])} />)
+    expect(document.querySelector('[data-slot="linear-publication-followup"]')?.textContent).toContain('Continue this same run')
+    expect(document.querySelector('[data-slot="linear-publication-followup"]')?.textContent).toContain('Do not mark Done or merge')
+    expect(sent.filter(request => request.method === 'POST')).toEqual([])
   })
 
   it('Draft PR 409: the server message as a danger toast + the copyable manual merge line', async () => {

@@ -913,11 +913,12 @@ export function useProjectRepoBase(): string | undefined {
 }
 
 /** Health describes only the boot repo. Other projects use their own forge inventory. */
-export function useProjectForge(): import('@open-mercato/cezar-api-client').ForgeInfo | null {
+export function useProjectForge(explicitProjectId?: string | null): import('@open-mercato/cezar-api-client').ForgeInfo | null {
   const health = useHealth().data
-  const { projectId } = useProjectScope()
+  const scope = useProjectScope()
+  const projectId = explicitProjectId === undefined ? scope.projectId : explicitProjectId
   const projects = useProjects().data
-  if (projectId === null || projectId === 'default' || projectId === health?.bootProject) return health?.forge ?? null
+  if (projectId === null || projectId === 'default' || projectId === (projects?.bootProject ?? health?.bootProject)) return health?.forge ?? null
   const kind = projects?.projects.find(project => project.id === projectId)?.forge
   return kind ? { kind, available: true } : null
 }
@@ -2091,15 +2092,25 @@ export function useReferenceStatuses(
   refs: readonly ReferenceStatusRequest[],
   enabled = true,
 ): ReferenceStatusLookup {
+  // These readers must not restart failed bootstrap queries when a fallback route mounts.
+  // The shell owns fetching; disabled observers still receive its cache updates.
+  const projects = useQuery({ queryKey: workspaceQueryKeys.projects, queryFn: ({ signal }) => getProjects({ signal }), enabled: false }).data
+  const health = useQuery({ queryKey: queryKeys.health, queryFn: ({ signal }) => getHealth({ signal }), enabled: false }).data
+  const gitlabProjects = new Set(projects?.projects?.filter(project => project.forge === 'gitlab').map(project => project.id))
+  if (health?.forge?.kind === 'gitlab') {
+    gitlabProjects.add('default')
+    gitlabProjects.add(projects?.bootProject ?? health.bootProject)
+  }
   // The refs array is rebuilt every render; its CONTENT is what the queries depend on. One sorted
   // signature string keeps the grouping (and therefore every query key) stable across repaints.
-  const signature = refs
+  const signature = refs.filter(ref => !gitlabProjects.has(ref.projectId))
     .map(refStatusKey)
     .sort()
     .join('|')
   const groups = useMemo(() => {
     const byProject = new Map<string, { prs: Set<number>; issues: Set<number> }>()
     for (const ref of refs) {
+      if (gitlabProjects.has(ref.projectId)) continue
       const bucket = byProject.get(ref.projectId) ?? { prs: new Set<number>(), issues: new Set<number>() }
       bucket[ref.kind === 'PR' ? 'prs' : 'issues'].add(ref.number)
       byProject.set(ref.projectId, bucket)
@@ -2209,6 +2220,7 @@ export function useReferenceStatuses(
 
   return useCallback(
     (ref: ReferenceStatusRequest): ReferenceStatusEntry => {
+      if (gitlabProjects.has(ref.projectId)) return { state: 'idle' }
       const key = refStatusKey(ref)
       const current = byRef.get(key)
       if (current) return current
@@ -2221,7 +2233,7 @@ export function useReferenceStatuses(
         ...(rememberedConflicts.has(key) ? { conflicting: true } : {}),
       }
     },
-    [byRef],
+    [byRef, [...gitlabProjects].sort().join('|')],
   )
 }
 

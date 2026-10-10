@@ -1,7 +1,7 @@
 import { memo, useMemo, type ReactNode } from 'react'
 import { useLocation } from 'react-router'
 
-import { useHealth, useProjectRuns, useProjects, useRunsForProject, useSkillsUpdate, useStarCount, useTodos } from '@/api/queries'
+import { useHealth, useProjectForge, useProjectRuns, useProjects, useRunsForProject, useSkillsUpdate, useStarCount, useTodos } from '@/api/queries'
 import type { HealthResponse, SkillsUpdateState } from '@open-mercato/cezar-api-client'
 import { AppShell, type RepoChip } from '@/components/app-shell'
 import { CommandPalette } from '@/components/command-palette'
@@ -79,6 +79,7 @@ export const AppShellContainer = memo(function AppShellContainer({ children }: {
   const runs = useRunsForProject(projectId, bootProjectId, unreadDoneCountSelector)
   const isBootProject = projectId !== null && projectId === bootProjectId
   const activeProject = registry?.projects.find((project) => project.id === projectId)
+  const forge = useProjectForge(projectId)
   const bootProject = registry?.projects.find((project) => project.id === bootProjectId)
   const tracker = projectId === null ? bootProject?.tracker : activeProject?.tracker
   const titleRunId = titleContext.taskId
@@ -175,8 +176,8 @@ export const AppShellContainer = memo(function AppShellContainer({ children }: {
         // Hidden until health confirms the forge driver (R6 Step 1.1) — same honesty rule as
         // the chips: the nav must not claim a GitHub tab it cannot back. The Tools menu's
         // forge note says why it is absent.
-        forgeAvailable={health.data?.forge?.available === true || health.data?.forge?.kind === 'gitlab'}
-        forgeKind={activeProject?.forge ?? (isBootProject ? health.data?.forge?.kind : undefined)}
+        forgeAvailable={forge?.available === true || forge?.kind === 'gitlab'}
+        forgeKind={forge?.kind}
         // Hidden unless health reports the opt-in inbox (#471) — same honesty rule as above:
         // the nav must not offer an Inbox this server will never fill.
         inboxAvailable={inboxAvailable}

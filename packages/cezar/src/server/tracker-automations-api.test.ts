@@ -59,6 +59,30 @@ it.each([{ events: ['issue.opened'] }, { schedule: { type: 'daily', hour: 4, min
   expect((await apiRequest(app, '/api/v1/automations', body({ ...input, ...extra }))).status).toBe(400);
   expect(automations.list()).toHaveLength(0);
 });
+it('keeps Linear lifecycle opt-in explicit, scoped and single-writer', async () => {
+  const linear = { kind: 'linear' as const, source: { id: 'org', webUrl: 'https://linear.app/acme' }, externalId: '11111111-1111-4111-8111-111111111111', externalName: 'Team', connectionId: '22222222-2222-4222-8222-222222222222' };
+  const trackerTrigger = { association: linear, events: ['issue.opened'] };
+  mocks.driver.mockResolvedValue({ association: linear, automationOptions: options });
+  for (const prefix of ['/api/v1', '/api/v1/p/default']) {
+    const created = await apiRequest(app, `${prefix}/automations`, body({ ...input, trackerTrigger, task: { ...input.task, linearWorkflow: true } }));
+    expect(created.status).toBe(201);
+    const { automation } = await created.json() as any;
+    expect(automation).toMatchObject({ enabled: false, task: { linearWorkflow: true } });
+    const detail = automationDetailResponseSchema.parse(await (await apiRequest(app, `${prefix}/automations/${automation.id}`)).json());
+    expect(detail.automation.task.linearWorkflow).toBe(true);
+  }
+  for (const override of [
+    { trackerTrigger: trigger },
+    { kind: 'schedule', schedule: { type: 'daily', hour: 4, minute: 0 } },
+    { task: { ...input.task, linearWorkflow: true, variants: 2 } },
+    { task: { ...input.task, linearWorkflow: 'true' } },
+  ]) {
+    expect((await apiRequest(app, '/api/v1/automations', body({ ...input, trackerTrigger, task: { ...input.task, linearWorkflow: true }, ...override }))).status).toBe(400);
+  }
+  const ordinary = await apiRequest(app, '/api/v1/automations', body({ ...input, trackerTrigger }));
+  expect((await ordinary.json() as any).automation.task).not.toHaveProperty('linearWorkflow');
+  expect(mocks.launch).not.toHaveBeenCalled();
+});
 it('creates paused, round trips status IDs, edits, enables and previews without a receipt', async () => {
   const created = await apiRequest(app, '/api/v1/automations', body(input));
   expect(created.status).toBe(201);

@@ -53,6 +53,8 @@ export const automationTaskSchema = z
     worktree: z.boolean().optional(),
     generateFollowups: z.boolean().optional(),
     autonomous: z.boolean().optional(),
+    /** Separate write consent, never inferred from credential delegation or task text. */
+    linearWorkflow: z.boolean().optional(),
     systemPrompt: z.string().max(100_000).optional(),
     /** The automation's own dispatch setting (spec 2026-09-14 Q4). */
     dispatch: z
@@ -106,6 +108,10 @@ export const automationDefinitionObjectSchema = z
   })
   .passthrough()
   .superRefine((definition, ctx) => {
+    if (definition.task.linearWorkflow && (definition.kind !== 'tracker'
+      || definition.trackerTrigger?.association.kind !== 'linear' || (definition.task.variants ?? 1) !== 1)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['task', 'linearWorkflow'], message: 'Linear workflow updates require a Linear tracker automation with one variant' });
+    }
     if (definition.kind === 'schedule') {
       if (!definition.schedule) {
         ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['schedule'], message: 'a scheduled automation needs a schedule' });

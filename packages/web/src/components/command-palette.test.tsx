@@ -184,6 +184,22 @@ function openWith(init: { metaKey?: boolean; ctrlKey?: boolean }) {
   fireEvent.keyDown(window, { key: 'k', ...init })
 }
 
+it('uses the active project forge instead of the boot GitHub repo', async () => {
+  renderPalette({ entry: '/p/lab/github', projects: [project({ id: 'boot', forge: 'github' }), project({ id: 'lab', forge: 'gitlab' })] })
+  openWith({ ctrlKey: true })
+  const view = await screen.findByRole('option', { name: 'GitLab' })
+  expect(screen.queryByRole('option', { name: 'GitHub' })).toBeNull()
+  fireEvent.click(view)
+  expect(location()).toBe('/p/lab/github')
+})
+
+it('does not advertise the boot forge inside a plain Git project', async () => {
+  renderPalette({ entry: '/p/plain/', projects: [project({ id: 'boot', forge: 'github' }), project({ id: 'plain' })] })
+  openWith({ ctrlKey: true })
+  await waitFor(() => expect(document.querySelector('[data-project-id="plain"]')).not.toBeNull())
+  expect(screen.queryByRole('option', { name: 'GitHub' })).toBeNull()
+})
+
 describe('opening and closing', () => {
   it.each([
     { name: '⌘K', init: { metaKey: true } },
