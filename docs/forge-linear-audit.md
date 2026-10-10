@@ -41,4 +41,12 @@ Audited 2026-10-08 against fork base `39e428c8`. Verification uses mocked vendor
 
 ## Validation
 
-Root and child regression tests were run against original source before fixes to establish failures. Independently verified child suites: backend 444, UI 440, Linear 292 tests. Complete cockpit suite: 4,474 passed. Complete client suite: 45 passed. Pre-Linear complete server suite: 4,647 passed and three existing smoke skips. Typecheck, build/tarball gate, 42 core unit tests and 17 package smoke tests passed. Final integrated server validation is recorded after publication linking.
+Final integrated validation, 2026-10-10:
+
+- `npm run typecheck`: all workspaces passed.
+- `npm test`: all 543 test files accounted for across workspace and remainder runs, with 542 passing files and one existing opt-in smoke suite skipped. Deduplicated results: server 4,683 passed, cockpit 4,474 passed, API client 45 passed (9,202 total), plus three skipped smoke tests.
+- Full commands hit the environment's 600-second process cap. Unfinished files were enumerated from completed-suite output and run separately, with no source edits between runs. One unrelated diff-render assertion failed under concurrent load and passed on its isolated rerun. This is complete partitioned coverage, not a claim that the timed-out commands passed.
+- `npm run test:unit`: 42 passed. `npm run build`: passed, including the 777-file tarball gate. `npm run test:package`: 17 passed.
+- Real Chromium smoke verified GitHub and nested-group GitLab Code hosting settings using an isolated repository/home with `CEZ_DRY_RUN=1`. This checks rendered provider, repository and connection controls, not live vendor permissions or the entire browser E2E suite.
+
+Root and child regressions were run against original source to establish failures before fixes. Independently verified child suites: backend 444, UI 440, Linear 292 tests. Validation used Node 26's `--no-experimental-webstorage` for jsdom compatibility and a validation-only login-shell PATH for the installed Node executable. Live task environment identifiers were removed so fixture agents could not alter the real task's handoff.
