@@ -13,6 +13,7 @@ import type {
   RunnerModelCatalogResponse,
   Skill,
   WorkflowDef,
+  WorkflowStepDef,
 } from '@open-mercato/cezar-api-client'
 
 /**
@@ -332,6 +333,8 @@ export function buildCreateRunBody(opts: {
   task: string
   /** `null` — nothing picked — runs the built-in `quick-task`. */
   source: TaskSource | null
+  /** An approved plan replaces the selected source, keeping every other launch option. */
+  steps?: readonly WorkflowStepDef[]
   model: string
   /** Native coding-agent settings stay visible, but a locked model is never a request override. */
   modelsLocked?: boolean
@@ -381,7 +384,9 @@ export function buildCreateRunBody(opts: {
   } = opts
   return {
     task,
-    ...(source?.source === 'skill'
+    ...(opts.steps
+      ? { steps: [...opts.steps] }
+      : source?.source === 'skill'
       ? { steps: [{ id: 'task', name: source.ref, skill: source.ref, prompt: '{{task}}' }] }
       : { workflow: source?.ref ?? QUICK_TASK }),
     model: modelsLocked ? undefined : model || undefined,

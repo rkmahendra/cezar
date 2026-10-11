@@ -24,6 +24,7 @@ const EMPTY_DRAFT = {
   agentProfile: null,
   model: null,
   variants: 1,
+  planFirst: false,
   worktree: null,
   autonomous: null,
   generateFollowups: null,
@@ -42,6 +43,7 @@ describe('resolveComposerRunMode', () => {
   const base = {
     hasGit: true,
     variants: 1,
+    planFirst: false,
     explicitAutonomous: null,
     explicitWorktree: null,
     configuredAutonomous: 'source-dependent' as const,
@@ -78,6 +80,11 @@ describe('resolveComposerRunMode', () => {
     expect(resolveComposerRunMode({ ...base, hasGit: false, explicitWorktree: true }).worktree).toBe(false)
   })
 
+  it('keeps Plan interactive even with explicit autonomy and dispatch', () => {
+    expect(resolveComposerRunMode({ ...base, planFirst: true, explicitAutonomous: true, dispatch: true }))
+      .toEqual({ autonomous: false, worktree: true })
+  })
+
   it('keeps explicit and configured Worktree opt-outs authoritative for ordinary workflows', () => {
     expect(resolveComposerRunMode({ ...base, explicitWorktree: false }).worktree).toBe(false)
     expect(resolveComposerRunMode({ ...base, configuredWorktree: false }).worktree).toBe(false)
@@ -88,6 +95,7 @@ describe('resolveComposerRunMode with dispatch (spec 2026-09-10-dispatch)', () =
   const base = {
     hasGit: true,
     variants: 1,
+    planFirst: false,
     explicitAutonomous: null,
     explicitWorktree: null,
     configuredAutonomous: 'source-dependent' as const,
@@ -123,6 +131,7 @@ describe('the new-task draft store', () => {
       agentProfile: null,
       model: null,
       variants: 1,
+      planFirst: false,
       worktree: null,
       autonomous: null,
       generateFollowups: null,
@@ -138,6 +147,7 @@ describe('the new-task draft store', () => {
       agentProfile: null,
       model: 'gpt-5-codex',
       variants: 2,
+      planFirst: false,
       worktree: false,
       autonomous: null,
       generateFollowups: false,
@@ -159,6 +169,7 @@ describe('the new-task draft store', () => {
       agentProfile: null,
       model: 'opus',
       variants: 3,
+      planFirst: false,
       worktree: null,
       autonomous: null,
       generateFollowups: true,
@@ -174,6 +185,7 @@ describe('the new-task draft store', () => {
       // Runner/model/variants are a way of working — they survive, as they always did.
       model: 'opus',
       variants: 3,
+      planFirst: false,
       worktree: null,
       autonomous: null,
       generateFollowups: true,
@@ -189,6 +201,7 @@ describe('the new-task draft store', () => {
       agentProfile: null,
       model: 'sonnet',
       variants: 2,
+      planFirst: false,
       worktree: false,
       autonomous: null,
       generateFollowups: false,
@@ -200,6 +213,7 @@ describe('the new-task draft store', () => {
     expect(JSON.parse(raw)).toMatchObject({
       text: 'do not lose me',
       variants: 2,
+      planFirst: false,
       worktree: false,
       autonomous: null,
       generateFollowups: false,
@@ -218,6 +232,7 @@ describe('the new-task draft store', () => {
       agentProfile: null,
       model: null,
       variants: 1,
+      planFirst: false,
       worktree: null,
       autonomous: null,
       generateFollowups: null,
@@ -233,6 +248,7 @@ describe('the new-task draft store', () => {
       agentProfile: null,
       model: null,
       variants: 1,
+      planFirst: false,
       worktree: null,
       autonomous: null,
       generateFollowups: null,

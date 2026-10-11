@@ -1,5 +1,5 @@
 import { QueryClientProvider } from '@tanstack/react-query'
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -9,6 +9,7 @@ import type {
   AgentProfilesResponse,
   ConfigResponse,
   HealthResponse,
+  PlanResponse,
   ProviderStatusResponse,
   RepoResponse,
   Skill,
@@ -180,6 +181,16 @@ const WORKSPACE_CONFIG: WorkspaceConfigResponse = {
   },
 }
 
+const PLAN: PlanResponse = {
+  steps: [
+    { id: 'fix', name: 'Fix', skill: 'om-fix', prompt: '{{task}}' },
+    { id: 'check', name: 'Check', command: 'npm test' },
+    { id: 'review', name: 'Review', prompt: 'Review the changes' },
+  ],
+  rationale: 'Fix, check, then review.',
+  fallback: false,
+}
+
 // ---- harness ---------------------------------------------------------------------------------
 
 type Recorded = { method: string; url: string; body?: unknown }
@@ -213,6 +224,8 @@ function serve(overrides: {
   uiState?: Record<string, unknown>
   /** Non-2xx `GET /api/v1/ui-state` answers (the query-errored path: `data` stays undefined). */
   uiStateStatus?: number
+  plan?: PlanResponse | (() => Promise<Response>)
+  saveWorkflow?: () => Promise<Response>
   createRun?: unknown
   /** Non-2xx `POST /api/v1/runs` answers (the auto-start failure path). */
   createRunStatus?: number
@@ -233,6 +246,7 @@ function serve(overrides: {
     repo: REPO,
     uiState: {},
     uiStateStatus: 200,
+    plan: PLAN,
     createRun: { id: 'r1' },
     createRunStatus: 201,
     launchKey: 'k-real',
@@ -268,6 +282,10 @@ function serve(overrides: {
       if (url === '/api/v1/ui-state' && method === 'GET') return json(data.uiState, data.uiStateStatus)
       if (url === '/api/v1/ui-state' && method === 'PUT') return json(body ?? {})
       if (url === '/api/v1/runs' && method === 'POST') return json(data.createRun, data.createRunStatus)
+      if (url === '/api/v1/plan' && method === 'POST') {
+        return typeof data.plan === 'function' ? data.plan() : json(data.plan)
+      }
+      if (url === '/api/v1/workflows' && method === 'POST') return data.saveWorkflow?.() ?? json({ path: '/repo/.ai/cezar/workflows/saved.yaml' })
       if (url === '/api/v1/config' && method === 'GET')
         return typeof data.config === 'function'
           ? data.config()
@@ -347,13 +365,15 @@ const postedBody = () => requests.find((r) => r.method === 'POST' && r.url === '
 // ---- the hero surface -------------------------------------------------------------------------
 
 describe('the hero surface', () => {
-  it('offers one Start action without a plan-mode switcher', async () => {
+  it('offers Plan and Act modes with Act selected by default', async () => {
     serve()
     renderNewTask()
     await pillReady()
 
     expect(screen.getByRole('button', { name: 'Start task' })).toBeTruthy()
-    expect(screen.queryByRole('radiogroup', { name: 'Run mode' })).toBeNull()
+    expect(screen.getByRole('radiogroup', { name: 'Run mode' })).toBeTruthy()
+    expect((screen.getByRole('radio', { name: 'Act' }) as HTMLInputElement).checked).toBe(true)
+    expect((screen.getByRole('radio', { name: 'Plan' }) as HTMLInputElement).checked).toBe(false)
   })
 
   it('renders the mockup hero: title, subtitle, twinkles, and focus lands in the textarea', async () => {
@@ -381,6 +401,212 @@ describe('the hero surface', () => {
     expect(textarea().value).toContain('failing or flaky test')
     expect(requests.some((r) => r.method === 'POST')).toBe(false)
     expect(location()).toBe('/new')
+  })
+})
+
+describe('Plan/Act flow', () => {
+  const mode = (name: 'Act' | 'Plan') => screen.getByRole('radio', { name }) as HTMLInputElement
+  const review = () => screen.getByRole('dialog', { name: 'Proposed chain' })
+  const planTask = async () => {
+    await pillReady()
+    fireEvent.click(mode('Plan'))
+    fireEvent.change(textarea(), { target: { value: 'Fix the flaky suite' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Plan task' }))
+    return screen.findByRole('dialog', { name: 'Proposed chain' })
+  }
+
+  it('keeps mode and draft across remounts, forces Autonomous off only while planning', async () => {
+    serve()
+    const view = renderNewTask()
+    await pillReady()
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Autonomous' }))
+    fireEvent.change(textarea(), { target: { value: 'Unsent draft' } })
+    fireEvent.click(mode('Plan'))
+    expect(mode('Plan').checked).toBe(true)
+    const autonomous = screen.getByRole('checkbox', { name: 'Autonomous' }) as HTMLButtonElement
+    expect(autonomous.disabled).toBe(true)
+    expect(autonomous.getAttribute('aria-checked')).toBe('false')
+    expect(JSON.parse(localStorage.getItem('cez-new-task-draft')!).planFirst).toBe(true)
+    view.unmount()
+    renderNewTask()
+    await pillReady()
+    expect(mode('Plan').checked).toBe(true)
+    expect(textarea().value).toBe('Unsent draft')
+    fireEvent.click(mode('Act'))
+    expect(screen.getByRole('checkbox', { name: 'Autonomous' }).getAttribute('aria-checked')).toBe('true')
+    await startTask()
+    expect(postedBody()).toEqual({ task: 'Unsent draft', workflow: 'quick-task', autonomous: true })
+    expect(requests.some((r) => r.url === '/api/v1/plan')).toBe(false)
+  })
+
+  it('plans without starting, edits the chain, then posts exactly the approved steps and current options', async () => {
+    writeDraft({ ...readDraft(), runner: 'claude', model: 'sonnet', worktree: false, autonomous: true, generateFollowups: false })
+    serve()
+    renderNewTask('/new?todo=inbox-1')
+    await planTask()
+    expect(requests.find((r) => r.url === '/api/v1/plan')?.body).toEqual({ task: 'Fix the flaky suite' })
+    expect(postedBody()).toBeUndefined()
+    fireEvent.click(within(review()).getByRole('button', { name: 'Move step 3 up' }))
+    fireEvent.click(within(review()).getByRole('button', { name: 'Remove step 3' }))
+    fireEvent.click(within(review()).getByRole('button', { name: 'Start' }))
+    await waitFor(() => expect(location()).toBe('/tasks/r1'))
+    expect(postedBody()).toEqual({
+      task: 'Fix the flaky suite', steps: [PLAN.steps[0], PLAN.steps[2]],
+      runner: 'claude', model: 'sonnet', worktree: false, generateFollowups: false, todoId: 'inbox-1',
+    })
+    expect(readDraft().text).toBe('')
+  })
+
+  it('preserves account, variants, dispatch and locked-model policy on approved plans', async () => {
+    writeDraft({ ...readDraft(), agentProfile: 'klaudiusz', model: 'sonnet', variants: 2, dispatch: { maxSubtasks: 3 } })
+    serve({ agentProfiles: ACCOUNTS, config: { modelsLocked: true }, health: { ...HEALTH, capabilities: { ...HEALTH.capabilities, dispatch: true } } })
+    renderNewTask()
+    await planTask()
+    fireEvent.click(within(review()).getByRole('button', { name: 'Start' }))
+    await waitFor(() => expect(location()).toBe('/tasks/r1'))
+    expect(postedBody()).toEqual({ task: 'Fix the flaky suite', steps: PLAN.steps, agentProfile: 'klaudiusz', variants: 2, dispatch: { maxSubtasks: 3 } })
+  })
+
+  it('plans without git and launches in place after approval', async () => {
+    serve({ repo: REPO_NO_GIT, health: HEALTH_NO_GIT })
+    renderNewTask()
+    await planTask()
+    fireEvent.click(within(review()).getByRole('button', { name: 'Start' }))
+    await waitFor(() => expect(location()).toBe('/tasks/r1'))
+    expect(postedBody()).toEqual({ task: 'Fix the flaky suite', steps: PLAN.steps, worktree: false })
+  })
+
+  it('keyboard submit plans once and freezes the mode while planning', async () => {
+    const pending = deferredJson<PlanResponse>()
+    serve({ plan: pending.fetch })
+    renderNewTask()
+    await pillReady()
+    fireEvent.click(mode('Plan'))
+    fireEvent.change(textarea(), { target: { value: 'Plan by keyboard' } })
+    fireEvent.keyDown(textarea(), { key: 'Enter', ctrlKey: true })
+    await screen.findByText('Planning…')
+    expect((screen.getByRole('radiogroup', { name: 'Run mode' }) as HTMLFieldSetElement).disabled).toBe(true)
+    expect(textarea().disabled).toBe(true)
+    expect(postedBody()).toBeUndefined()
+    pending.release(PLAN)
+    await screen.findByRole('dialog', { name: 'Proposed chain' })
+    expect(requests.filter((r) => r.url === '/api/v1/plan')).toHaveLength(1)
+  })
+
+  it.each(['Discard', 'Escape'])('%s restores exact draft, attachment and textarea focus', async (action) => {
+    serve()
+    renderNewTask()
+    await pillReady()
+    fireEvent.click(mode('Plan'))
+    fireEvent.change(textarea(), { target: { value: '  Keep my draft\n' } })
+    paste(textarea(), [pngFile()])
+    await waitFor(() => expect(attachmentChips()).toHaveLength(1))
+    fireEvent.click(screen.getByRole('button', { name: 'Plan task' }))
+    await screen.findByRole('dialog', { name: 'Proposed chain' })
+    if (action === 'Escape') fireEvent.keyDown(review(), { key: 'Escape' })
+    else fireEvent.click(within(review()).getByRole('button', { name: 'Discard' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(textarea().value).toBe('  Keep my draft\n')
+    expect(attachmentChips()).toHaveLength(1)
+    await waitFor(() => expect(document.activeElement).toBe(textarea()))
+    expect(postedBody()).toBeUndefined()
+  })
+
+  it('starts planned attachments exactly once and leaves no attachment for the next task', async () => {
+    serve()
+    const view = renderNewTask()
+    await pillReady()
+    paste(textarea(), [pngFile()])
+    await waitFor(() => expect(attachmentChips()).toHaveLength(1))
+    await planTask()
+    fireEvent.click(within(review()).getByRole('button', { name: 'Start' }))
+    await waitFor(() => expect(location()).toBe('/tasks/r1'))
+    expect(postedBody()).toMatchObject({ images: [{ mediaType: 'image/png', data: 'AQID' }] })
+    expect(requests.filter((r) => r.method === 'POST' && r.url === '/api/v1/runs')).toHaveLength(1)
+    view.unmount()
+    renderNewTask()
+    await pillReady()
+    expect(attachmentChips()).toHaveLength(0)
+    expect(textarea().value).toBe('')
+  })
+
+  it('restores draft and attachment after a rejected plan request', async () => {
+    serve({ plan: () => Promise.resolve(new Response(JSON.stringify({ error: 'Planner failed' }), { status: 500 })) })
+    renderNewTask()
+    await pillReady()
+    fireEvent.click(mode('Plan'))
+    fireEvent.change(textarea(), { target: { value: 'Retry me' } })
+    paste(textarea(), [pngFile()])
+    await waitFor(() => expect(attachmentChips()).toHaveLength(1))
+    fireEvent.click(screen.getByRole('button', { name: 'Plan task' }))
+    await screen.findByText('Planner failed')
+    expect(textarea().value).toBe('Retry me')
+    expect(attachmentChips()).toHaveLength(1)
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(postedBody()).toBeUndefined()
+  })
+
+  it('keeps fallback plans reviewable and blocks an empty chain', async () => {
+    serve({ plan: { ...PLAN, fallback: true, steps: [PLAN.steps[0]!] } })
+    renderNewTask()
+    await planTask()
+    expect(screen.getByText('Planner unavailable: single-step plan.')).toBeTruthy()
+    fireEvent.click(within(review()).getByRole('button', { name: 'Remove step 1' }))
+    expect((within(review()).getByRole('button', { name: 'Start' }) as HTMLButtonElement).disabled).toBe(true)
+    expect((within(review()).getByRole('button', { name: 'Save as chain' }) as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  it('saves reviewed steps as a workflow without starting work', async () => {
+    serve()
+    renderNewTask()
+    await planTask()
+    fireEvent.click(within(review()).getByRole('button', { name: 'Save as chain' }))
+    fireEvent.change(screen.getByRole('textbox', { name: 'Chain name' }), { target: { value: 'saved' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await screen.findByText('Chain saved')
+    expect(requests.find((r) => r.method === 'POST' && r.url === '/api/v1/workflows')?.body).toEqual({ name: 'saved', steps: PLAN.steps })
+    expect(review()).toBeTruthy()
+    expect(postedBody()).toBeUndefined()
+  })
+
+  it('retains the review and draft when starting fails', async () => {
+    serve({ createRun: { error: 'Start failed' }, createRunStatus: 409 })
+    renderNewTask()
+    await planTask()
+    fireEvent.click(within(review()).getByRole('button', { name: 'Start' }))
+    await screen.findByText('Start failed')
+    expect(review()).toBeTruthy()
+    expect(readDraft().text).toBe('Fix the flaky suite')
+    expect((within(review()).getByRole('button', { name: 'Start' }) as HTMLButtonElement).disabled).toBe(false)
+  })
+
+  it('requires explicit overwrite confirmation before replacing a saved workflow', async () => {
+    const saveWorkflow = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: 'Already exists', exists: true }), { status: 409 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ path: '/repo/.ai/cezar/workflows/saved.yaml' })))
+    serve({ saveWorkflow })
+    renderNewTask()
+    await planTask()
+    fireEvent.click(within(review()).getByRole('button', { name: 'Save as chain' }))
+    fireEvent.change(screen.getByRole('textbox', { name: 'Chain name' }), { target: { value: 'saved' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await screen.findByRole('alert')
+    expect(saveWorkflow).toHaveBeenCalledTimes(1)
+    fireEvent.click(screen.getByRole('button', { name: 'Overwrite' }))
+    await screen.findByText('Chain saved')
+    expect(requests.filter((r) => r.method === 'POST' && r.url === '/api/v1/workflows').map((r) => r.body)).toEqual([
+      { name: 'saved', steps: PLAN.steps }, { name: 'saved', steps: PLAN.steps, overwrite: true },
+    ])
+    expect(postedBody()).toBeUndefined()
+  })
+
+  it('keeps provider gating in Plan mode', async () => {
+    serve({ providerStatus: PROVIDERS_NONE })
+    renderNewTask()
+    await screen.findByRole('link', { name: 'Configure providers' })
+    fireEvent.click(mode('Plan'))
+    expect((screen.getByRole('button', { name: 'Plan task' }) as HTMLButtonElement).disabled).toBe(true)
+    expect(postedBody()).toBeUndefined()
   })
 })
 
@@ -498,7 +724,7 @@ describe('picker data flows', () => {
 
   it('drops a persisted model preset that belongs to another runner', async () => {
     writeDraft({
-      text: '', source: null, runner: 'codex', agentProfile: null, model: 'claude-opus-4-8', variants: 1,
+      text: '', source: null, runner: 'codex', agentProfile: null, model: 'claude-opus-4-8', variants: 1, planFirst: false,
       worktree: null, autonomous: null, generateFollowups: null, dispatch: null,
     })
     serve({ health: HEALTH_MULTI, providerStatus: PROVIDERS_MULTI })
@@ -1011,7 +1237,7 @@ describe('submit', () => {
     // lands in its errored state immediately and the test stays deterministic.
     writeDraft({
       text: '', source: { source: 'skill', ref: 'om-fix' }, runner: null, agentProfile: null, model: null,
-      variants: 1, worktree: null, autonomous: null, generateFollowups: null, dispatch: null,
+      variants: 1, planFirst: false, worktree: null, autonomous: null, generateFollowups: null, dispatch: null,
     })
     serve({ createRun: { id: 'run-9' }, uiStateStatus: 404 })
     renderNewTask()
