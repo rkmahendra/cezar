@@ -11,7 +11,7 @@ import { useParams, useSearchParams } from 'react-router'
 
 import { Link, useNavigate } from '@/lib/project-router'
 
-import { createRun, getLaunchKey, putConfig, putUiState } from '@/api/client'
+import { createRun, getLaunchKey, postPlan, putConfig, putUiState } from '@/api/client'
 import { useProjectScope } from '@/api/project-scope-context'
 import { hasAccountChoice, useAgentAccounts } from '@/api/agent-accounts'
 import {
@@ -34,6 +34,7 @@ import type {
   ProjectListEntry,
   RepoResponse,
   Runner,
+  WorkflowStepDef,
 } from '@open-mercato/cezar-api-client'
 import { TwinkleBackdrop } from '@/components/centered-state'
 import { Composer, type ComposerHandle } from '@/components/composer/composer'
@@ -94,6 +95,7 @@ import {
   type TaskSource,
 } from './new-task-form'
 import { parseNewTaskParams } from './new-task-params'
+import { PlanReview, type PendingPlan } from './plan-review'
 
 /**
  * `/new` — the full-screen new-task hero (spec §"New task (full-screen, #386)"; visual
@@ -322,6 +324,7 @@ export function NewTaskRoute() {
   const runMode = resolveComposerRunMode({
     hasGit,
     variants,
+    planFirst: draft.planFirst,
     explicitAutonomous: draft.autonomous,
     explicitWorktree: draft.worktree,
     interactive: selectedSkill?.interactive,
@@ -352,6 +355,11 @@ export function NewTaskRoute() {
   const generateFollowupsOn = followupsToggleShown
     ? (draft.generateFollowups ?? uiState.data?.lastGenerateFollowups ?? true)
     : false
+
+  // Plan proposes a chain only. Nothing runs until the user approves it (spec 008).
+  const [plan, setPlan] = useState<PendingPlan | null>(null)
+  const [planning, setPlanning] = useState(false)
+  const [starting, setStarting] = useState(false)
 
   // ---- bookmarklet deep-link (spec 011 — legacy handleDeepLink, verbatim) -------------------
   // `auto=1` with a ref arms the unattended start; the composer stays hidden behind a
@@ -452,12 +460,12 @@ export function NewTaskRoute() {
     // Legacy focused the Run button so a bare Enter submits the reviewed form.
     document
       .querySelector<HTMLButtonElement>(
-        '[data-slot="composer"] button[aria-label="Start task"]',
+        '[data-slot="composer"] button[aria-label="Start task"], [data-slot="composer"] button[aria-label="Plan task"]',
       )
       ?.focus()
   }, [notice, sourcesReady]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const submit = async (text: string, submitted: AttachmentInput[]) => {
+  const submit = async (text: string, submitted: AttachmentInput[], steps?: WorkflowStepDef[]) => {
     if (!providersReady || runner === null) {
       throw new Error(
         providers.isPending
@@ -471,10 +479,26 @@ export function NewTaskRoute() {
       // Rejection restores the draft — nothing typed is lost to a race with the pickers.
       throw new Error('Still loading workflows and skills — try again in a second.')
     }
+    if (draft.planFirst && steps === undefined) {
+      // Undo Composer's optimistic clear before awaiting: navigation must keep unspent input.
+      update({ text: draft.text.trim() === text ? draft.text : text })
+      setImages(images)
+      setPlanning(true)
+      try {
+        setPlan({ ...await postPlan(text), task: text, images: submitted })
+      } catch (error) {
+        // Input is already restored. Rethrowing would make Composer append it a second time.
+        toast(error instanceof Error ? error.message : String(error), { tone: 'danger' })
+      } finally {
+        setPlanning(false)
+      }
+      return
+    }
     const created = await createRun(
       buildCreateRunBody({
         task: text,
         source,
+        steps,
         model,
         modelsLocked,
         runner,
@@ -501,25 +525,39 @@ export function NewTaskRoute() {
     void putUiState({
       // `null` when nothing was picked — an honest record of a plain run, and the value that
       // stops an older cockpit (which still preselects `lastTask`) restoring a stale skill.
-      lastTask: source,
+      lastTask: steps ? null : source,
       // Recency is a list of PICKS: a task that chose nothing did not pick quick-task, and
       // filling the list with the default would push real choices out of it.
-      ...(source ? { recentSources: pushRecentSource(recentSources, source) } : {}),
+      ...(!steps && source ? { recentSources: pushRecentSource(recentSources, source) } : {}),
       ...(followupsToggleShown ? { lastGenerateFollowups: generateFollowupsOn } : {}),
       // Frequency sort (#408): only a SKILL pick counts — the map is keyed by skill name, and a
       // workflow choice here doesn't select one directly. Gated on the CURRENT map being known:
       // the PUT merge is shallow, so bumping off an errored ui-state query (`sourcesReady` only
       // rules out `isPending`, not a failed fetch) would send a one-entry map and wipe every
       // accumulated count.
-      ...(source?.source === 'skill' && uiState.data !== undefined
+      ...(!steps && source?.source === 'skill' && uiState.data !== undefined
         ? { skillUsage: bumpSkillUsage(uiState.data.skillUsage, source.ref) }
         : {}),
     })
       .then(() => queryClient.invalidateQueries({ queryKey: queryKeys.uiState }))
       .catch(() => {})
     clearStartedDraft(draftProjectId)
+    setImages([])
+    setPlan(null)
     void queryClient.invalidateQueries({ queryKey: queryKeys.runs.all })
     navigate(startedRunPath(created))
+  }
+
+  const startPlanned = async () => {
+    if (!plan || plan.steps.length === 0 || starting) return
+    setStarting(true)
+    try {
+      await submit(plan.task, plan.images, plan.steps)
+    } catch (error) {
+      toast(error instanceof Error ? error.message : String(error), { tone: 'danger' })
+    } finally {
+      setStarting(false)
+    }
   }
 
   // The unattended bookmarklet start in flight: no composer, no params echoed anywhere —
@@ -570,7 +608,7 @@ export function NewTaskRoute() {
 
         <Composer
           ref={composerRef}
-          onSubmit={submit}
+          onSubmit={(text, submitted) => submit(text, submitted)}
           value={draft.text}
           onValueChange={(text) => update({ text })}
           images={images}
@@ -578,14 +616,18 @@ export function NewTaskRoute() {
           autoFocus
           placeholder="Describe a task for the agent — / for skills…"
           ariaLabel="Describe a task for the agent"
-          sendAriaLabel="Start task"
-          disabled={!providersReady}
+          sendAriaLabel={draft.planFirst ? 'Plan task' : 'Start task'}
+          disabled={!providersReady || planning || starting}
           disabledReason={
-            providers.isPending
-              ? 'Checking agent providers…'
-              : providers.isError
-                ? 'Provider authentication could not be verified.'
-                : 'Connect an agent provider before starting a task.'
+            planning
+              ? 'Planning…'
+              : starting
+                ? 'Starting…'
+                : providers.isPending
+                  ? 'Checking agent providers…'
+                  : providers.isError
+                    ? 'Provider authentication could not be verified.'
+                    : 'Connect an agent provider before starting a task.'
           }
           autocompleteSkills
           footerStart={
@@ -706,6 +748,7 @@ export function NewTaskRoute() {
               ) : null}
               <AutonomousToggle
                 on={autonomousOn}
+                disabled={draft.planFirst}
                 onChange={(on) => update({ autonomous: on })}
               />
               {followupsToggleShown ? (
@@ -745,6 +788,27 @@ export function NewTaskRoute() {
           }
           footerEnd={
             <>
+              <fieldset
+                role="radiogroup"
+                aria-label="Run mode"
+                disabled={planning || starting}
+                className="inline-flex gap-0.5 rounded-lg bg-muted p-[3px]"
+              >
+                {[false, true].map((planFirst) => (
+                  <label key={String(planFirst)} className="cursor-pointer">
+                    <input
+                      type="radio"
+                      name="new-task-mode"
+                      checked={draft.planFirst === planFirst}
+                      onChange={() => update({ planFirst })}
+                      className="peer sr-only"
+                    />
+                    <span className="flex items-center justify-center rounded-md px-2 py-1 text-xs font-medium text-muted-foreground peer-checked:bg-contrast peer-checked:text-contrast-foreground peer-focus-visible:ring-2 peer-focus-visible:ring-ring max-sm:min-h-11 max-sm:min-w-11">
+                      {planFirst ? 'Plan' : 'Act'}
+                    </span>
+                  </label>
+                ))}
+              </fieldset>
               {!providersReady && !providers.isPending ? (
                 <Link
                   to="/settings/agents#providers"
@@ -763,6 +827,12 @@ export function NewTaskRoute() {
           }
         />
 
+        {draft.planFirst ? (
+          <p role="status" className="mt-2 text-xs text-muted-foreground">
+            {planning ? 'Planning…' : 'Plan first: review the proposed steps before starting. Autonomous stays off.'}
+          </p>
+        ) : null}
+
         {dispatchOn && (dispatchSettingsOpen || dispatchHintFlash) ? (
           <p
             data-slot="dispatch-hint"
@@ -777,6 +847,16 @@ export function NewTaskRoute() {
         <SuggestedChips onPick={(text) => update({ text })} />
       </div>
 
+      {plan !== null ? (
+        <PlanReview
+          plan={plan}
+          starting={starting}
+          startAvailable={providersReady && sourcesReady}
+          onStepsChange={(steps) => setPlan({ ...plan, steps })}
+          onStart={() => void startPlanned()}
+          onDiscard={() => setPlan(null)}
+        />
+      ) : null}
     </div>
   )
 }
