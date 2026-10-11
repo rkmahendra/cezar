@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 
 import { ApiError, createWorkflow } from '@/api/client'
 import { queryKeys } from '@/api/queries'
@@ -22,6 +22,7 @@ export function PlanReview({ plan, starting, startAvailable, onStepsChange, onSt
   onDiscard: () => void
 }) {
   const queryClient = useQueryClient()
+  const saveButton = useRef<HTMLButtonElement>(null)
   const [dragIndex, setDragIndex] = useState<number | null>(null)
   const [saving, setSaving] = useState(false)
   const [name, setName] = useState('')
@@ -54,7 +55,7 @@ export function PlanReview({ plan, starting, startAvailable, onStepsChange, onSt
       <DialogContent
         showCloseButton={false}
         data-slot="plan-review"
-        className="flex flex-col max-sm:top-0 max-sm:left-0 max-sm:h-dvh max-sm:max-w-full max-sm:translate-x-0 max-sm:translate-y-0 max-sm:rounded-none max-sm:[&_button]:min-h-11 max-sm:[&_button]:min-w-11 sm:max-h-[85dvh] sm:max-w-2xl"
+        className="flex flex-col overflow-y-auto max-sm:top-0 max-sm:left-0 max-sm:h-dvh max-sm:max-w-full max-sm:translate-x-0 max-sm:translate-y-0 max-sm:rounded-none max-sm:[&_button]:min-h-11 max-sm:[&_button]:min-w-11 sm:max-h-[85dvh] sm:max-w-2xl"
         onCloseAutoFocus={(event) => {
           event.preventDefault()
           document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Describe a task for the agent"]')?.focus()
@@ -67,7 +68,7 @@ export function PlanReview({ plan, starting, startAvailable, onStepsChange, onSt
         <p className="text-xs text-muted-foreground">
           {plan.fallback ? 'Planner unavailable: single-step plan.' : plan.rationale}
         </p>
-        <fieldset disabled={busy} className="min-h-0 overflow-y-auto">
+        <fieldset disabled={busy} className="shrink-0">
           <legend className="sr-only">Proposed steps</legend>
           <ol className="space-y-2">
             {plan.steps.map((step, index) => (
@@ -103,11 +104,14 @@ export function PlanReview({ plan, starting, startAvailable, onStepsChange, onSt
         ) : null}
         <div className="flex flex-wrap gap-2 pb-[env(safe-area-inset-bottom)]">
           <Button disabled={empty || busy || !startAvailable} onClick={onStart}>{starting ? 'Starting…' : 'Start'}</Button>
-          <Button variant="outline" disabled={empty || busy} onClick={() => setSaving(true)}>Save as chain</Button>
+          <Button ref={saveButton} variant="outline" disabled={empty || busy} onClick={() => setSaving(true)}>Save as chain</Button>
           <Button variant="ghost" disabled={busy} className="ml-auto" onClick={onDiscard}>Discard</Button>
         </div>
         <Dialog open={saving} onOpenChange={(open) => { if (!save.isPending) { setSaving(open); setOverwrite(false) } }}>
-          <DialogContent showCloseButton={false}>
+          <DialogContent showCloseButton={false} onCloseAutoFocus={(event) => {
+            event.preventDefault()
+            saveButton.current?.focus()
+          }}>
             <DialogHeader>
               <DialogTitle>Save as chain</DialogTitle>
               <DialogDescription>Save these steps as a reusable workflow.</DialogDescription>

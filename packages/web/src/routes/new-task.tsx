@@ -480,12 +480,15 @@ export function NewTaskRoute() {
       throw new Error('Still loading workflows and skills — try again in a second.')
     }
     if (draft.planFirst && steps === undefined) {
+      // Undo Composer's optimistic clear before awaiting: navigation must keep unspent input.
+      update({ text: draft.text.trim() === text ? draft.text : text })
+      setImages(images)
       setPlanning(true)
       try {
         setPlan({ ...await postPlan(text), task: text, images: submitted })
-        // Composer clears optimistically. Discard must return the original draft and chips.
-        update({ text: draft.text.trim() === text ? draft.text : text })
-        setImages(images)
+      } catch (error) {
+        // Input is already restored. Rethrowing would make Composer append it a second time.
+        toast(error instanceof Error ? error.message : String(error), { tone: 'danger' })
       } finally {
         setPlanning(false)
       }
