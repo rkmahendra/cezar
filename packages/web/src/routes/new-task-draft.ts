@@ -29,6 +29,8 @@ export interface NewTaskDraft {
   agentProfile: string | null
   model: string | null
   variants: number
+  /** Plan first is a sticky way of working, defaulting to immediate execution. */
+  planFirst: boolean
   /** Worktree opt-out (#worktree-toggle): false runs in the repo working tree. null → the
    *  remembered `lastWorktree` / default (isolated worktree). */
   worktree: boolean | null
@@ -46,6 +48,7 @@ export interface NewTaskDraft {
 export interface ComposerRunModeInput {
   hasGit: boolean
   variants: number
+  planFirst?: boolean
   explicitAutonomous: boolean | null
   explicitWorktree: boolean | null
   interactive?: boolean
@@ -76,10 +79,9 @@ export function resolveComposerRunMode(input: ComposerRunModeInput): {
   // Dispatch sits between the explicit choice and the recommendation: only an explicit OFF
   // beats it, because an interactive skill's advice is about the parent pausing for the user,
   // and a dispatching parent is expected to keep going while its children work.
-  const autonomous = input.explicitAutonomous
-    ?? (dispatch ? true : undefined)
-    ?? recommended
-    ?? autonomousFallback
+  const autonomous = input.planFirst
+    ? false
+    : (input.explicitAutonomous ?? (dispatch ? true : undefined) ?? recommended ?? autonomousFallback)
   const worktree = !input.hasGit
     ? false
     : input.variants > 1 || dispatch
@@ -128,6 +130,7 @@ const EMPTY: NewTaskDraft = {
   agentProfile: null,
   model: null,
   variants: 1,
+  planFirst: false,
   worktree: null,
   autonomous: null,
   generateFollowups: null,
@@ -162,6 +165,7 @@ function normalize(raw: unknown): NewTaskDraft {
     agentProfile: typeof obj.agentProfile === 'string' ? obj.agentProfile : null,
     model: typeof obj.model === 'string' ? obj.model : null,
     variants: obj.variants === 2 || obj.variants === 3 ? obj.variants : 1,
+    planFirst: obj.planFirst === true,
     worktree: typeof obj.worktree === 'boolean' ? obj.worktree : null,
     autonomous: typeof obj.autonomous === 'boolean' ? obj.autonomous : null,
     generateFollowups:
